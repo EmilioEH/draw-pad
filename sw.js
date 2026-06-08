@@ -1,4 +1,4 @@
-const CACHE = 'draw-pad-v1';
+const CACHE = 'draw-pad-v2';
 const ASSETS = [
   '/',
   '/index.html',
@@ -20,7 +20,10 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(k => Promise.all(k.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    Promise.all([
+      caches.keys().then(k => Promise.all(k.filter(k => k !== CACHE).map(k => caches.delete(k)))),
+      clients.claim(),
+    ])
   );
 });
 
