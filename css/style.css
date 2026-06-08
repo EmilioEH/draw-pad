@@ -1,0 +1,34 @@
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none}
+body{font-family:-apple-system,system-ui,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0e6d3;display:flex;justify-content:center;align-items:center}
+
+#app{width:100%;max-width:600px;height:100dvh;display:flex;flex-direction:column;position:relative;background:#fff3e6}
+
+/* Canvas area */
+#canvasWrap{flex:1;position:relative;overflow:hidden}
+#stencilCanvas,#drawCanvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none}
+#stencilCanvas{z-index:1;pointer-events:none}
+#drawCanvas{z-index:2}
+#drawCanvas:active{cursor:crosshair}
+
+/* ─── TOOLBAR ─── */
+#toolbar{flex-shrink:0;background:#f0e6d3;padding:8px 10px 12px;display:flex;flex-direction:column;gap:8px;border-top:2px solid #ddd}
+#stencilRow{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.stencil-btn{width:44px;height:44px;border-radius:12px;border:2px solid transparent;background:#e8dccc;font-size:20px;cursor:pointer;transition:all .12s;display:flex;align-items:center;justify-content:center}
+.stencil-btn:active{transform:scale(.9)}
+.stencil-btn.on{border-color:#e63946;background:#fff;box-shadow:0 0 0 2px rgba(230,57,70,.3)}
+
+#controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
+#colors{display:flex;gap:5px}
+.c-btn{width:32px;height:32px;border-radius:50%;border:2px solid transparent;cursor:pointer;transition:all .12s}
+.c-btn:active{transform:scale(.85)}
+.c-btn.on{border-color:#fff;box-shadow:0 0 0 2px #333}
+
+#sizeRow{display:flex;gap:4px}
+.size-btn{width:36px;height:36px;border-radius:8px;border:2px solid transparent;background:#e8dccc;font-size:13px;font-weight:600;color:#555;cursor:pointer;transition:all .12s}
+.size-btn:active{transform:scale(.9)}
+.size-btn.active{border-color:#e63946;background:#fff}
+
+#actions{display:flex;gap:6px}
+.act-btn{width:36px;height:36px;border-radius:8px;border:none;background:#e8dccc;font-size:16px;cursor:pointer;transition:all .12s;display:flex;align-items:center;justify-content:center}
+.act-btn:active{transform:scale(.9)}

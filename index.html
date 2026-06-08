@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#f0e6d3">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="description" content="Draw Pad — draw and trace dinosaurs">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <title>Draw Pad</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="canvasWrap">
+      <canvas id="stencilCanvas"></canvas>
+      <canvas id="drawCanvas"></canvas>
+    </div>
+
+    <div id="toolbar">
+      <div id="stencilRow">
+        <button class="stencil-btn" data-stencil="none" aria-label="No stencil">✕</button>
+        <button class="stencil-btn" data-stencil="trex" aria-label="T-Rex">🦖</button>
+        <button class="stencil-btn" data-stencil="stego" aria-label="Stegosaurus">🦕</button>
+        <button class="stencil-btn" data-stencil="trike" aria-label="Triceratops">🐲</button>
+        <button class="stencil-btn" data-stencil="brachio" aria-label="Brachiosaurus">🦒</button>
+        <button class="stencil-btn" data-stencil="ptera" aria-label="Pterodactyl">🦅</button>
+      </div>
+      <div id="controls">
+        <div id="colors">
+          <button class="c-btn" data-color="#e63946" style="background:#e63946"></button>
+          <button class="c-btn" data-color="#f4a261" style="background:#f4a261"></button>
+          <button class="c-btn" data-color="#e9c46a" style="background:#e9c46a"></button>
+          <button class="c-btn" data-color="#2a9d8f" style="background:#2a9d8f"></button>
+          <button class="c-btn" data-color="#457b9d" style="background:#457b9d"></button>
+          <button class="c-btn" data-color="#7b2cbf" style="background:#7b2cbf"></button>
+          <button class="c-btn" data-color="#f4a1c1" style="background:#f4a1c1"></button>
+          <button class="c-btn" data-color="#1d3557" style="background:#1d3557"></button>
+        </div>
+        <div id="sizeRow">
+          <button class="size-btn" data-size="4">S</button>
+          <button class="size-btn active" data-size="10">M</button>
+          <button class="size-btn" data-size="20">L</button>
+        </div>
+        <div id="actions">
+          <button id="undoBtn" class="act-btn" aria-label="Undo">↩</button>
+          <button id="clearBtn" class="act-btn" aria-label="Clear">🗑</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/stencils.js"></script>
+  <script src="js/canvas.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
