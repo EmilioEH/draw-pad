@@ -3,8 +3,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const stencilEl = document.getElementById('stencilCanvas');
   const draw = new DrawCanvas(drawEl, stencilEl);
 
-  draw.bind();
   draw.resize();
+  draw.bind();
 
   window.addEventListener('resize', () => draw.resize());
 

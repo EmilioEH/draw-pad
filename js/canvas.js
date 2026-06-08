@@ -2,8 +2,6 @@ class DrawCanvas {
   constructor(canvasEl, stencilEl) {
     this.canvas = canvasEl;
     this.stencilEl = stencilEl;
-    this.ctx = canvasEl.getContext('2d');
-    this.sCtx = stencilEl.getContext('2d');
     this.drawing = false;
     this.color = '#1d3557';
     this.size = 10;
@@ -11,6 +9,8 @@ class DrawCanvas {
     this.undoStack = [];
     this.maxUndo = 30;
     this._lastPos = null;
+    this._w = 0;
+    this._h = 0;
   }
 
   resize() {
@@ -24,6 +24,10 @@ class DrawCanvas {
     this.stencilEl.height = rect.height * dpr;
     this.stencilEl.style.width = rect.width + 'px';
     this.stencilEl.style.height = rect.height + 'px';
+    if (!this.ctx) {
+      this.ctx = this.canvas.getContext('2d');
+      this.sCtx = this.stencilEl.getContext('2d');
+    }
     this.ctx.scale(dpr, dpr);
     this.sCtx.scale(dpr, dpr);
     this._w = rect.width;
