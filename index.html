@@ -29,6 +29,33 @@
         <button class="stencil-btn" data-stencil="brachio" aria-label="Brachiosaurus">🦒</button>
         <button class="stencil-btn" data-stencil="ptera" aria-label="Pterodactyl">🦅</button>
       </div>
+
+      <div id="stampRow" class="hidden">
+        <button class="stamp-btn" data-stamp="star">⭐</button>
+        <button class="stamp-btn" data-stamp="heart">❤️</button>
+        <button class="stamp-btn" data-stamp="flower">🌸</button>
+        <button class="stamp-btn" data-stamp="smile">😊</button>
+        <button class="stamp-btn" data-stamp="sun">☀️</button>
+        <button class="stamp-btn" data-stamp="moon">🌙</button>
+        <button class="stamp-btn" data-stamp="cloud">☁️</button>
+        <button class="stamp-btn" data-stamp="tree">🌳</button>
+        <button class="stamp-btn" data-stamp="fish">🐟</button>
+        <button class="stamp-btn" data-stamp="butterfly">🦋</button>
+        <div class="stamp-size-row">
+          <button class="stamp-size-btn" data-stampsize="32">S</button>
+          <button class="stamp-size-btn active" data-stampsize="48">M</button>
+          <button class="stamp-size-btn" data-stampsize="72">L</button>
+        </div>
+      </div>
+
+      <div id="modeRow">
+        <button class="mode-btn active" data-mode="draw" aria-label="Draw">✏️</button>
+        <button class="mode-btn" data-mode="stamp" aria-label="Stamps">⭐</button>
+        <button class="mode-btn toggle-btn" data-toggle="sparkle" aria-label="Sparkles">✨</button>
+        <button class="mode-btn toggle-btn" data-toggle="glow" aria-label="Glow">💡</button>
+        <button class="mode-btn toggle-btn" data-toggle="smooth" aria-label="Auto-smooth">〰️</button>
+      </div>
+
       <div id="controls">
         <div id="colors">
           <button class="c-btn" data-color="#e63946" style="background:#e63946"></button>
@@ -39,6 +66,14 @@
           <button class="c-btn" data-color="#7b2cbf" style="background:#7b2cbf"></button>
           <button class="c-btn" data-color="#f4a1c1" style="background:#f4a1c1"></button>
           <button class="c-btn" data-color="#1d3557" style="background:#1d3557"></button>
+          <button class="c-btn mix-btn" data-color="#mixed" aria-label="Mix colors">
+            <span class="mix-icon">🎨</span>
+          </button>
+        </div>
+        <div id="mixBar" class="hidden">
+          <div id="mixPreview"></div>
+          <button id="mixApply" class="act-btn">OK</button>
+          <button id="mixCancel" class="act-btn">✕</button>
         </div>
         <div id="sizeRow">
           <button class="size-btn" data-size="4">S</button>

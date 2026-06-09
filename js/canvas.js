@@ -11,6 +11,16 @@ class DrawCanvas {
     this._lastPos = null;
     this._w = 0;
     this._h = 0;
+
+    this.mode = 'draw';
+    this.stampId = null;
+    this.stampSize = 48;
+    this.sparkles = [];
+    this.sparkleOn = false;
+    this.glowOn = false;
+    this._smoothing = false;
+    this._strokePoints = [];
+    this._animFrame = null;
   }
 
   resize() {
@@ -37,6 +47,14 @@ class DrawCanvas {
 
   setColor(c) { this.color = c; }
   setSize(s) { this.size = s; }
+  setMode(m) { this.mode = m; }
+  setStamp(id, size) { this.stampId = id; this.stampSize = size || 48; this.mode = 'stamp'; }
+  setSparkle(on) { this.sparkleOn = on; }
+  setGlow(on) {
+    this.glowOn = on;
+    this.canvas.style.filter = on ? 'drop-shadow(0 0 8px rgba(255,255,255,0.8))' : '';
+  }
+  setSmoothing(on) { this._smoothing = on; }
 
   setStencil(id) {
     this.stencilId = id;
@@ -71,18 +89,132 @@ class DrawCanvas {
     this.drawStencil();
   }
 
-  /* ─── POINT HELPERS ─── */
   _pos(e) {
     const rect = this.canvas.getBoundingClientRect();
     const t = e.touches ? e.touches[0] : e;
     return { x: t.clientX - rect.left, y: t.clientY - rect.top };
   }
 
+  /* ─── STAMP PLACEMENT ─── */
+  _placeStamp(p) {
+    if (!this.stampId) return;
+    const stamps = {
+      star: '⭐',
+      heart: '❤️',
+      flower: '🌸',
+      smile: '😊',
+      sun: '☀️',
+      moon: '🌙',
+      cloud: '☁️',
+      tree: '🌳',
+      fish: '🐟',
+      butterfly: '🦋',
+    };
+    const emoji = stamps[this.stampId];
+    if (!emoji) return;
+    this.saveState();
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = `${this.stampSize}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(emoji, p.x, p.y);
+    ctx.restore();
+  }
+
+  /* ─── SPARKLE EFFECT ─── */
+  _addSparkle(x, y) {
+    if (!this.sparkleOn) return;
+    for (let i = 0; i < 3; i++) {
+      this.sparkles.push({
+        x: x + (Math.random() - 0.5) * this.size * 2,
+        y: y + (Math.random() - 0.5) * this.size * 2,
+        vx: (Math.random() - 0.5) * 2,
+        vy: (Math.random() - 0.5) * 2 - 1,
+        life: 1,
+        size: Math.random() * 4 + 2,
+        color: this.color,
+      });
+    }
+  }
+
+  _updateSparkles() {
+    if (this.sparkles.length === 0) return;
+    const ctx = this.ctx;
+    ctx.save();
+    for (let i = this.sparkles.length - 1; i >= 0; i--) {
+      const s = this.sparkles[i];
+      s.x += s.vx;
+      s.y += s.vy;
+      s.vy += 0.05;
+      s.life -= 0.03;
+      if (s.life <= 0) {
+        this.sparkles.splice(i, 1);
+        continue;
+      }
+      ctx.globalAlpha = s.life;
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      const spikes = 4;
+      const outer = s.size * s.life;
+      const inner = outer * 0.4;
+      for (let j = 0; j < spikes * 2; j++) {
+        const r = j % 2 === 0 ? outer : inner;
+        const angle = (j * Math.PI) / spikes - Math.PI / 2;
+        const sx = s.x + Math.cos(angle) * r;
+        const sy = s.y + Math.sin(angle) * r;
+        if (j === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    if (this.sparkles.length > 0) {
+      this._animFrame = requestAnimationFrame(() => this._updateSparkles());
+    }
+  }
+
+  /* ─── AUTO-SMOOTH ─── */
+  _smoothStroke() {
+    if (this._strokePoints.length < 3) {
+      this._strokePoints = [];
+      return;
+    }
+    const pts = this._strokePoints;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.lineWidth = this.size;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = this.color;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const midX = (pts[i].x + pts[i + 1].x) / 2;
+      const midY = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last.x, last.y);
+    ctx.stroke();
+    ctx.restore();
+    this._strokePoints = [];
+  }
+
   /* ─── DRAWING ─── */
   _start(e) {
     e.preventDefault();
+    const p = this._pos(e);
+
+    if (this.mode === 'stamp') {
+      this._placeStamp(p);
+      return;
+    }
+
     this.drawing = true;
-    this._lastPos = this._pos(e);
+    this._lastPos = p;
+    this._strokePoints = [p];
     saveUndo = true;
   }
 
@@ -91,25 +223,72 @@ class DrawCanvas {
     if (!this.drawing) return;
     const p = this._pos(e);
     const ctx = this.ctx;
+
+    if (this._smoothing) {
+      this._strokePoints.push(p);
+      ctx.clearRect(0, 0, this._w, this._h);
+      if (this.undoStack.length > 0) {
+        const img = new Image();
+        img.src = this.undoStack[this.undoStack.length - 1];
+        ctx.drawImage(img, 0, 0, this._w, this._h);
+      }
+      this._smoothStrokePreview();
+    } else {
+      ctx.save();
+      ctx.lineWidth = this.size;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = this.color;
+      ctx.beginPath();
+      ctx.moveTo(this._lastPos.x, this._lastPos.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    this._addSparkle(p.x, p.y);
+    this._lastPos = p;
+  }
+
+  _smoothStrokePreview() {
+    const pts = this._strokePoints;
+    if (pts.length < 2) return;
+    const ctx = this.ctx;
     ctx.save();
     ctx.lineWidth = this.size;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = this.color;
-
     ctx.beginPath();
-    ctx.moveTo(this._lastPos.x, this._lastPos.y);
-    ctx.lineTo(p.x, p.y);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const midX = (pts[i].x + pts[i + 1].x) / 2;
+      const midY = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last.x, last.y);
     ctx.stroke();
     ctx.restore();
-    this._lastPos = p;
   }
 
   _end(e) {
     e.preventDefault();
     if (!this.drawing) return;
     this.drawing = false;
-    if (saveUndo) {
+
+    if (this._smoothing && this._strokePoints.length > 0) {
+      this.saveState();
+      this.ctx.clearRect(0, 0, this._w, this._h);
+      if (this.undoStack.length > 1) {
+        const img = new Image();
+        img.src = this.undoStack[this.undoStack.length - 2];
+        this.ctx.drawImage(img, 0, 0, this._w, this._h);
+      }
+      this._smoothStroke();
+      this.undoStack.pop();
+      this.saveState();
+    } else if (saveUndo) {
       this.saveState();
       saveUndo = false;
     }
