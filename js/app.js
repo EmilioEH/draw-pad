@@ -42,10 +42,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* ─── MODE BUTTONS ─── */
   function updateModeUI(mode) {
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.mode-btn[data-mode]').forEach(b => b.classList.remove('active'));
     const btn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
     if (btn) btn.classList.add('active');
-
     document.getElementById('stampRow').classList.toggle('hidden', mode !== 'stamp');
     draw.setMode(mode);
   }
@@ -69,21 +68,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   /* ─── COLORS ─── */
-  document.querySelectorAll('.c-btn:not(.mix-btn)').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on'));
-      btn.classList.add('on');
-      draw.setColor(btn.dataset.color);
-    });
-  });
-  document.querySelector('.c-btn').classList.add('on');
-
-  /* ─── COLOR MIXING ─── */
+  let mixing = false;
   let mixColor1 = null;
   let mixColor2 = null;
   const mixBar = document.getElementById('mixBar');
   const mixPreview = document.getElementById('mixPreview');
-  const mixBtn = document.querySelector('.mix-btn');
 
   function hexToRgb(hex) {
     const r = parseInt(hex.slice(1, 3), 16);
@@ -116,17 +105,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  mixBtn.addEventListener('click', () => {
-    mixBar.classList.toggle('hidden');
-    mixColor1 = null;
-    mixColor2 = null;
-    mixPreview.style.background = '#ccc';
-    document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('mix1', 'mix2'));
-  });
-
   document.querySelectorAll('.c-btn:not(.mix-btn)').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!mixBar.classList.contains('hidden')) {
+      if (mixing) {
         document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('mix1', 'mix2'));
         if (!mixColor1) {
           mixColor1 = btn.dataset.color;
@@ -136,8 +117,23 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.classList.add('mix2');
           updateMixPreview();
         }
+      } else {
+        document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on'));
+        btn.classList.add('on');
+        draw.setColor(btn.dataset.color);
       }
     });
+  });
+
+  document.querySelector('.c-btn').classList.add('on');
+
+  document.querySelector('.mix-btn').addEventListener('click', () => {
+    mixing = !mixing;
+    document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('mix1', 'mix2'));
+    mixBar.classList.toggle('hidden', !mixing);
+    mixColor1 = null;
+    mixColor2 = null;
+    mixPreview.style.background = '#ccc';
   });
 
   document.getElementById('mixApply').addEventListener('click', () => {
@@ -145,8 +141,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const mixed = mixColors(mixColor1, mixColor2);
       draw.setColor(mixed);
       document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on', 'mix1', 'mix2'));
-      mixBtn.classList.add('on');
-      mixBtn.style.background = mixed;
+      document.querySelector('.mix-btn').classList.add('on');
+      document.querySelector('.mix-btn').style.background = mixed;
+      mixing = false;
       mixBar.classList.add('hidden');
       mixColor1 = null;
       mixColor2 = null;
@@ -154,6 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('mixCancel').addEventListener('click', () => {
+    mixing = false;
     mixBar.classList.add('hidden');
     mixColor1 = null;
     mixColor2 = null;

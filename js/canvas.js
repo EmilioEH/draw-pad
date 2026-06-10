@@ -17,10 +17,10 @@ class DrawCanvas {
     this.stampSize = 48;
     this.sparkles = [];
     this.sparkleOn = false;
+    this._sparkleRunning = false;
     this.glowOn = false;
     this._smoothing = false;
     this._strokePoints = [];
-    this._animFrame = null;
   }
 
   resize() {
@@ -49,10 +49,16 @@ class DrawCanvas {
   setSize(s) { this.size = s; }
   setMode(m) { this.mode = m; }
   setStamp(id, size) { this.stampId = id; this.stampSize = size || 48; this.mode = 'stamp'; }
-  setSparkle(on) { this.sparkleOn = on; }
+  setSparkle(on) {
+    this.sparkleOn = on;
+    if (!on) {
+      this.sparkles = [];
+      this._sparkleRunning = false;
+    }
+  }
   setGlow(on) {
     this.glowOn = on;
-    this.canvas.style.filter = on ? 'drop-shadow(0 0 8px rgba(255,255,255,0.8))' : '';
+    this.canvas.style.filter = on ? 'drop-shadow(0 0 12px rgba(255,255,255,0.8))' : '';
   }
   setSmoothing(on) { this._smoothing = on; }
 
@@ -136,10 +142,17 @@ class DrawCanvas {
         color: this.color,
       });
     }
+    if (!this._sparkleRunning) {
+      this._sparkleRunning = true;
+      this._updateSparkles();
+    }
   }
 
   _updateSparkles() {
-    if (this.sparkles.length === 0) return;
+    if (this.sparkles.length === 0 || !this.sparkleOn) {
+      this._sparkleRunning = false;
+      return;
+    }
     const ctx = this.ctx;
     ctx.save();
     for (let i = this.sparkles.length - 1; i >= 0; i--) {
@@ -171,17 +184,18 @@ class DrawCanvas {
     }
     ctx.restore();
     if (this.sparkles.length > 0) {
-      this._animFrame = requestAnimationFrame(() => this._updateSparkles());
+      requestAnimationFrame(() => this._updateSparkles());
+    } else {
+      this._sparkleRunning = false;
     }
   }
 
   /* ─── AUTO-SMOOTH ─── */
   _smoothStroke() {
-    if (this._strokePoints.length < 3) {
-      this._strokePoints = [];
-      return;
-    }
     const pts = this._strokePoints;
+    this._strokePoints = [];
+    if (pts.length < 2) return;
+
     const ctx = this.ctx;
     ctx.save();
     ctx.lineWidth = this.size;
@@ -190,16 +204,20 @@ class DrawCanvas {
     ctx.strokeStyle = this.color;
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length - 1; i++) {
-      const midX = (pts[i].x + pts[i + 1].x) / 2;
-      const midY = (pts[i].y + pts[i + 1].y) / 2;
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+
+    if (pts.length === 2) {
+      ctx.lineTo(pts[1].x, pts[1].y);
+    } else {
+      for (let i = 1; i < pts.length - 1; i++) {
+        const midX = (pts[i].x + pts[i + 1].x) / 2;
+        const midY = (pts[i].y + pts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+      }
+      const last = pts[pts.length - 1];
+      ctx.lineTo(last.x, last.y);
     }
-    const last = pts[pts.length - 1];
-    ctx.lineTo(last.x, last.y);
     ctx.stroke();
     ctx.restore();
-    this._strokePoints = [];
   }
 
   /* ─── DRAWING ─── */
@@ -222,18 +240,18 @@ class DrawCanvas {
     e.preventDefault();
     if (!this.drawing) return;
     const p = this._pos(e);
-    const ctx = this.ctx;
 
     if (this._smoothing) {
       this._strokePoints.push(p);
-      ctx.clearRect(0, 0, this._w, this._h);
+      this.ctx.clearRect(0, 0, this._w, this._h);
       if (this.undoStack.length > 0) {
         const img = new Image();
         img.src = this.undoStack[this.undoStack.length - 1];
-        ctx.drawImage(img, 0, 0, this._w, this._h);
+        this.ctx.drawImage(img, 0, 0, this._w, this._h);
       }
       this._smoothStrokePreview();
     } else {
+      const ctx = this.ctx;
       ctx.save();
       ctx.lineWidth = this.size;
       ctx.lineCap = 'round';
@@ -261,13 +279,18 @@ class DrawCanvas {
     ctx.strokeStyle = this.color;
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length - 1; i++) {
-      const midX = (pts[i].x + pts[i + 1].x) / 2;
-      const midY = (pts[i].y + pts[i + 1].y) / 2;
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+
+    if (pts.length === 2) {
+      ctx.lineTo(pts[1].x, pts[1].y);
+    } else {
+      for (let i = 1; i < pts.length - 1; i++) {
+        const midX = (pts[i].x + pts[i + 1].x) / 2;
+        const midY = (pts[i].y + pts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+      }
+      const last = pts[pts.length - 1];
+      ctx.lineTo(last.x, last.y);
     }
-    const last = pts[pts.length - 1];
-    ctx.lineTo(last.x, last.y);
     ctx.stroke();
     ctx.restore();
   }
