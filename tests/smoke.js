@@ -188,7 +188,7 @@ const painted = page => page.evaluate(() => {
   /* Sparkles fade instead of staining the artwork. */
   {
     const p = await open();
-    await p.click('.toggle-btn[data-toggle="sparkle"]');
+    await p.click('.tool-btn[data-toggle="magic"]');
     await stroke(p, 150);
     const justAfter = await painted(p);
     await p.waitForTimeout(2000);
@@ -245,7 +245,8 @@ const painted = page => page.evaluate(() => {
   {
     const measure = async dpr => {
       const p = await open({ deviceScaleFactor: dpr });
-      await p.click('.stencil-btn[data-stencil="stego"]');
+      await p.click('#dinosBtn');
+      await p.click('.picker-cell[data-stencil="stego"]');
       await p.waitForTimeout(300);
       const box = await p.evaluate(() => {
         const c = document.getElementById('stencilCanvas');
@@ -267,6 +268,163 @@ const painted = page => page.evaluate(() => {
     const drift = Math.abs((a.bottom - a.top) - (b.bottom - b.top));
     check('stencil renders identically at dpr 1 and 2', drift < 4,
       `height ${(a.bottom - a.top).toFixed(1)} vs ${(b.bottom - b.top).toFixed(1)} css px`);
+  }
+
+  /* Tap-to-fill stays inside the stencil outline. */
+  {
+    const p = await open();
+    await p.click('#dinosBtn');
+    await p.click('.picker-cell[data-stencil="trex"]');
+    await p.waitForTimeout(300);
+    await p.click('.tool-btn[data-mode="fill"]');
+    await p.click('.c-btn[data-color="#34c759"]');
+    const g = await p.evaluate(() => {
+      const r = document.getElementById('canvasWrap').getBoundingClientRect();
+      return { w: r.width, h: r.height };
+    });
+    await p.mouse.click(g.w * 0.42, g.h * 0.47);   // inside the body
+    await p.waitForTimeout(500);
+    const frac = await p.evaluate(() => {
+      const c = document.getElementById('drawCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 10) n++;
+      return n / (c.width * c.height);
+    });
+    check('fill is bounded by the stencil outline', frac > 0.01 && frac < 0.35,
+      `filled ${(frac * 100).toFixed(1)}% of the canvas`);
+
+    await p.click('#undoBtn');
+    await p.waitForTimeout(300);
+    check('a fill can be undone', (await painted(p)) === 0);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* The rainbow brush actually varies hue along the stroke. */
+  {
+    const p = await open();
+    await p.click('.c-btn[data-color="rainbow"]');
+    await p.mouse.move(60, 150);
+    await p.mouse.down();
+    for (let i = 0; i < 30; i++) await p.mouse.move(60 + i * 9, 150 + Math.sin(i / 4) * 50);
+    await p.mouse.up();
+    await p.waitForTimeout(250);
+    const hues = await p.evaluate(() => {
+      const c = document.getElementById('drawCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const set = new Set();
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] === 255) set.add(`${d[i] >> 4},${d[i + 1] >> 4},${d[i + 2] >> 4}`);
+      }
+      return set.size;
+    });
+    check('rainbow brush varies colour along the stroke', hues > 10, `${hues} distinct colours`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Finishing a stencil celebrates, once, on the effects layer only. */
+  {
+    const p = await open();
+    await p.click('#dinosBtn');
+    await p.click('.picker-cell[data-stencil="trex"]');
+    await p.waitForTimeout(300);
+    const before = await p.evaluate(() => window.drawPad.coverage());
+    await p.evaluate(() => window.drawPad.confetti());
+    await p.waitForTimeout(150);
+    const fx = await p.evaluate(() => {
+      const c = document.getElementById('fxCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 10) n++;
+      return n;
+    });
+    check('confetti draws on the effects layer', before === 0 && fx > 0, `coverage=${before} fx=${fx}`);
+    await p.waitForTimeout(2600);
+    const after = await p.evaluate(() => {
+      const c = document.getElementById('fxCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 10) n++;
+      return n;
+    });
+    check('confetti clears and never touches the artwork',
+      after === 0 && (await painted(p)) === 0, `fx left=${after}`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Tracing the outline triggers the celebration exactly once. */
+  {
+    const p = await open();
+    await p.click('#dinosBtn');
+    await p.click('.picker-cell[data-stencil="trex"]');
+    await p.waitForTimeout(300);
+    await p.click('.size-btn[data-size="34"]');
+    const g = await p.evaluate(() => {
+      const r = document.getElementById('canvasWrap').getBoundingClientRect();
+      return { w: r.width, h: r.height };
+    });
+    for (let y = 20; y < g.h - 20; y += 16) {
+      await p.mouse.move(10, y);
+      await p.mouse.down();
+      await p.mouse.move(g.w - 10, y, { steps: 3 });
+      await p.mouse.up();
+    }
+    await p.waitForTimeout(200);
+    const st = await p.evaluate(() => ({
+      cov: window.drawPad.coverage(),
+      celebrated: window.drawPad._celebrated,
+    }));
+    check('covering the outline fires the celebration once',
+      st.cov > 0.55 && st.celebrated === 'trex', JSON.stringify(st));
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* The picture can be exported for a grown-up to keep. */
+  {
+    const p = await open();
+    await stroke(p, 150);
+    const size = await p.evaluate(async () => {
+      const blob = await window.drawPad.toBlob();
+      return blob ? blob.size : 0;
+    });
+    check('the drawing exports as a PNG', size > 1000, `${size} bytes`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Age-appropriate layout budget: canvas dominates, nothing to read,
+     nothing tiny, and no row wraps into a second line. */
+  {
+    for (const vp of [{ width: 420, height: 800 }, { width: 390, height: 664 },
+                      { width: 360, height: 640 }, { width: 768, height: 1024 }]) {
+      const p = await open({ viewport: vp });
+      const m = await p.evaluate(() => {
+        const cw = document.getElementById('canvasWrap').getBoundingClientRect();
+        const vis = [...document.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+        // offsetTop, not getBoundingClientRect: the selected swatch is scaled
+        // up, which shifts its visual box without wrapping the row.
+        const lines = ['#colors', '#tools'].map(sel =>
+          new Set([...document.querySelector(sel).children].map(k => k.offsetTop)).size);
+        return {
+          canvasPct: Math.round(cw.height / innerHeight * 100),
+          buttons: vis.length,
+          withText: vis.filter(b => /[A-Za-z]{2,}/.test(b.textContent)).length,
+          tinyTools: vis.filter(b => !b.classList.contains('c-btn'))
+            .filter(b => Math.min(b.getBoundingClientRect().width,
+                                  b.getBoundingClientRect().height) < 44).length,
+          lines,
+        };
+      });
+      check(`layout at ${vp.width}x${vp.height}: canvas ${m.canvasPct}%, ${m.buttons} buttons, ${m.withText} with text`,
+        m.canvasPct >= 78 && m.withText === 0 && m.tinyTools === 0 && m.buttons <= 22
+          && m.lines.every(l => l === 1),
+        JSON.stringify(m));
+      await p.close();
+    }
   }
 
   await browser.close();

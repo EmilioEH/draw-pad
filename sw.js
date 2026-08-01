@@ -1,8 +1,9 @@
-const CACHE = 'draw-pad-v5';
+const CACHE = 'draw-pad-v6';
 const ASSETS = [
   '/',
   '/index.html',
   '/css/style.css',
+  '/js/sound.js',
   '/js/stencils.js',
   '/js/canvas.js',
   '/js/app.js',

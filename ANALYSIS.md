@@ -9,15 +9,28 @@ are included so each one can be re-checked.
 
 ## Status
 
-**All ten defects in Part 1 are now fixed**, and `tests/smoke.js` covers them so they
-can't come back (`npm test`, 13 checks). Part 1 is kept as written — the original
-diagnosis — with each item marked.
+Everything in this document has now been implemented.
 
-The **Part 2 recommendations are mostly still open**: the UI has not been restructured
-for the age group yet. Landed from Part 2 so far: smoothing is always on, the
-unreadable `confirm()` is now a press-and-hold, the drawing autosaves, and stencil
-contrast is raised. Still to do: fewer and bigger wordless controls, full-screen
-stencil/stamp pickers, sound, tap-to-fill, and redrawing the T-Rex and Triceratops.
+**Part 1 — all ten defects fixed.** Each is marked below and covered by
+`tests/smoke.js` so it cannot come back.
+
+**Part 2 — all recommendations landed.** The UI was rebuilt around the age
+group: the canvas now takes 84–87% of the screen (was 74%, or 61% with the old
+stamp row open), there is no text anywhere in the interface, and every tool
+target is at least 44px. Tap-to-fill, sound, the rainbow brush, autosave,
+save/share and a finish-the-outline celebration are all in. The T-Rex and
+Triceratops were redrawn.
+
+`npm test` runs 24 checks across four screen sizes.
+
+Two changes worth calling out because they remove things:
+
+- **Colour mixing is gone**, replaced by a rainbow brush. The old flow was four
+  steps with invisible intermediate state and two abstract confirm buttons.
+  Mixing two swatches also tends to produce mud; a rainbow stroke is the same
+  idea with a better result and no steps.
+- **The Smooth toggle is gone** — smoothing is now always on, since it exists to
+  compensate for unsteady hands.
 
 ---
 
@@ -153,7 +166,7 @@ including 404s and 500s, which can poison the cache with error pages.
 The app is currently built like a scaled-down adult drawing tool. The gap to a
 preschool app is mostly about **removing** things.
 
-### Read nothing, tap anything
+### Read nothing, tap anything — DONE
 
 Most 3–4 year olds cannot read at all, and 5–6 year olds read haltingly. Every text
 label in the UI is invisible to the user:
@@ -166,7 +179,7 @@ label in the UI is invisible to the user:
 Replace all of them with pictures: three dots of increasing size instead of S/M/L, a
 green check instead of "OK". The dialog needs to go entirely (see below).
 
-### Cut the toolbar roughly in half
+### Cut the toolbar roughly in half — DONE
 
 Measured on a 420×800 phone: **25 visible buttons**, and the toolbar takes **26% of
 the screen** — rising to **~39%** when the stamp row opens (**47%** on a small 664 px-tall
@@ -177,14 +190,14 @@ phone). The canvas is the fun part and should dominate.
 - Same for the 10 stamps + 3 stamp sizes.
 - Target ~8–10 controls visible while drawing.
 
-### Make the targets much bigger
+### Make the targets much bigger — DONE
 
 **14 of the 25 visible buttons are under 44 px**, the smallest being 32 px. 44 px is the
 *adult* minimum. Preschool fine-motor control wants **60–75 px targets with 12 px+
 gaps**, and destructive controls placed far from everything else — right now Undo
 (36 px) sits directly beside Clear (36 px).
 
-### Delete colour mixing
+### Delete colour mixing — DONE (replaced by a rainbow brush)
 
 The flow is: tap the palette icon → tap colour A → tap colour B → tap OK. Four steps
 holding invisible intermediate state, with two abstract confirm buttons. That is
@@ -192,7 +205,7 @@ beyond this age group and will only generate frustration and accidental colour
 changes. If you want to keep the idea, make it physical: drag one swatch onto
 another and the blend just happens.
 
-### Turn modes into brushes
+### Turn modes into brushes — DONE
 
 The mode row mixes two different kinds of control that look nearly identical
 (only the border colour differs): exclusive modes (Draw, Stamps) and independent
@@ -202,40 +215,40 @@ Collapse it into a single row of **brushes** — a plain crayon, a sparkle brush
 rainbow brush — where the choice is exclusive and visible. Toggles are an abstraction
 that doesn't survive contact with a 4-year-old.
 
-### Turn smoothing on permanently
+### Turn smoothing on permanently — DONE
 
 Auto-smoothing directly compensates for the unsteady hands this age group has. It
 shouldn't be an off-by-default toggle the child will never find — it should always be
 on, and the toggle removed.
 
-### Make Clear hard, and reversible
+### Make Clear hard, and reversible — DONE
 
 Replace the text `confirm()` with a **press-and-hold** (~2 s) on the trash button, with a
 ring that visibly fills as they hold — young children rarely hold a deliberate press
 that long by accident, and it needs no reading. Then keep the cleared bitmap so Undo
 can bring it back.
 
-### Auto-save every stroke
+### Auto-save every stroke — DONE
 
 Persist the canvas to IndexedDB (or `localStorage` for a small PNG) after each stroke
 and restore on launch. A lost drawing is a genuinely upsetting event at this age, and
 right now it happens every time the app closes.
 
-### Add sound
+### Add sound — DONE
 
 This is the single highest-value addition for the money. A soft tone that varies with
 stroke speed, a chime when a stamp lands, a sparkle noise on the magic brush, applause
 when a stencil is finished. Include a mute control for parents (behind a parent gate,
 not in the child's reach).
 
-### Add tap-to-fill
+### Add tap-to-fill — DONE
 
 Tracing an outline demands motor precision a 3-year-old doesn't have. **Flood-filling a
 region with one tap** is instantly rewarding and needs no precision at all. Combined
 with the stencils, this turns the app into a colouring book, which is much better
 matched to the low end of the age range.
 
-### Redo the stencils
+### Redo the stencils — DONE
 
 Rendered at real device sizes, the quality varies a lot:
 
@@ -253,13 +266,13 @@ render the path data, which lets a designer iterate without touching code.
 Also: raise the stencil's contrast. `rgba(60,60,60,0.5)` at 2 px on cream is faint,
 and a child tracing it needs a clear line to follow.
 
-### Brighten the palette
+### Brighten the palette — DONE
 
 The current palette is a tasteful, muted, designer-ish set. Children this age respond
 to **saturated primaries**. Also drop the 4 px brush — it's thinner than a fingertip can
 reliably control.
 
-### Give them something to keep
+### Give them something to keep — DONE
 
 A save/share button (behind a parent gate) so a drawing can go to a grandparent, plus
 a small celebration when a stencil is traced, gives the activity a satisfying end
@@ -320,16 +333,28 @@ DPR-dependent bugs, even a handful of canvas smoke tests would have caught items
 and 4 immediately. Notably, all three of those reproduce in a headless browser in
 under a second.
 
-### Suggested order of work
+### What was done
 
-1. Fix undo (rewrite as a stroke list), multi-touch, resize-preservation, the default
-   colour, and the DPR arc bug. — *the app is not usable by a child until these land*
-2. Add auto-save and pointer capture.
-3. Restructure the UI for the age group: fewer, bigger, wordless controls; stencils
-   and stamps behind full-screen pickers.
-4. Redo the T-Rex and Triceratops artwork; raise stencil contrast.
-5. Add sound and tap-to-fill.
-6. Add a smoke-test harness so items 1–4 don't regress.
+1. Rewrote the drawing engine to store the picture as a list of operations
+   instead of canvas pixels. That single change fixed undo, resize and
+   multi-touch together, and made autosave cheap.
+2. Fixed the remaining defects: colour default, stencil DPR maths, pointer
+   capture, sparkle layering, glow, service-worker caching, and a tap that
+   left no mark.
+3. Rebuilt the UI for the age group: wordless controls, larger targets,
+   full-screen stencil and sticker pickers, floating actions, and a toolbar
+   that no longer wraps on small phones.
+4. Redrew the T-Rex and Triceratops from separate closed shapes rather than one
+   self-intersecting outline, and raised stencil contrast.
+5. Added tap-to-fill, sound, the rainbow brush, save/share and the celebration.
+6. Added `tests/smoke.js` — 24 checks, including a layout budget that fails if
+   the toolbar ever grows back or a control gains a text label.
 
-Items 1 and 2 are perhaps a day's work and would remove every way the app currently
-destroys a child's drawing. That's where I'd start.
+### Worth doing next
+
+- The fill runs at device resolution on the main thread. It is fine for a tap
+  (tens of milliseconds), but replaying a history with many fills after an undo
+  is O(fills x pixels). If that ever bites, cache a flattened bitmap.
+- Stencil artwork is still hand-tuned coordinate arrays. Authoring them as SVG
+  paths would let a designer iterate without touching code.
+- There is no redo button, though the engine supports it.

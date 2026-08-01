@@ -1,5 +1,15 @@
 /* Default brush colour. Kept here so index.html and DrawCanvas cannot disagree. */
-const DEFAULT_COLOR = '#e63946';
+const DEFAULT_COLOR = '#ff3b30';
+
+function hslToHex(h, s, l) {
+  const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
+  const f = n => {
+    const k = (n + h / 30) % 12;
+    const v = l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(255 * v).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
 
 /*
  * The drawing is stored as a list of operations, not as pixels.
@@ -32,6 +42,9 @@ class DrawCanvas {
     this.ref = null;
 
     this._live = new Map();   // pointerId -> op being drawn right now
+    this._hue = 0;            // advances so each rainbow stroke starts somewhere new
+    this._celebrated = null;
+    this.onCelebrate = null;
     this._sparkles = [];
     this._sparkleRaf = null;
     this._compositeRaf = null;
@@ -100,6 +113,7 @@ class DrawCanvas {
 
   setStencil(id) {
     this.stencilId = id;
+    this._celebrated = null;   // a new outline is a new thing to finish
     this.drawStencil();
   }
 
@@ -113,6 +127,8 @@ class DrawCanvas {
 
   /* Paints one op. Sets its own transform so it can target either canvas. */
   _paint(ctx, op) {
+    if (op.type === 'fill') { this._paintFill(ctx, op); return; }
+
     const t = this._t();
     ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
     ctx.translate(t.ox, t.oy);
@@ -138,15 +154,29 @@ class DrawCanvas {
     ctx.fillStyle = op.color;
     if (op.glow) {
       // Glow the stroke's own colour, so it reads against a light background.
-      ctx.shadowColor = op.color;
+      ctx.shadowColor = op.rainbow ? '#ff00cc' : op.color;
       ctx.shadowBlur = Math.max(8, op.size * 1.5);
     }
 
     if (pts.length === 1) {
       // A single tap should still leave a dot.
+      if (op.rainbow) ctx.fillStyle = `hsl(${op.hue || 0} 90% 55%)`;
       ctx.beginPath();
       ctx.arc(pts[0].x, pts[0].y, op.size / 2, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    if (op.rainbow) {
+      // Segment-by-segment so the hue can travel along the stroke.
+      for (let i = 0; i < pts.length - 1; i++) {
+        ctx.strokeStyle = `hsl(${((op.hue || 0) + i * 9) % 360} 90% 55%)`;
+        ctx.beginPath();
+        ctx.moveTo(pts[i].x, pts[i].y);
+        ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
+        ctx.stroke();
+      }
       ctx.restore();
       return;
     }
@@ -168,6 +198,146 @@ class DrawCanvas {
     }
     ctx.stroke();
     ctx.restore();
+  }
+
+  /* ─── FLOOD FILL ─── */
+  /*
+   * Tapping to fill a region is far easier than tracing for a small child, so
+   * it has to respect the stencil outline as a boundary even though the
+   * stencil lives on a separate layer. We composite art + stencil into a
+   * scratch canvas, flood there, and paint the resulting mask into the artwork.
+   *
+   * The op records which stencil was showing, so replaying history is exact.
+   */
+  _paintFill(ctx, op) {
+    const W = ctx.canvas.width;
+    const H = ctx.canvas.height;
+    if (!W || !H) return;
+
+    if (!this._scratch) {
+      this._scratch = document.createElement('canvas');
+      this._scratchCtx = this._scratch.getContext('2d', { willReadFrequently: true });
+      this._out = document.createElement('canvas');
+      this._outCtx = this._out.getContext('2d');
+    }
+    for (const c of [this._scratch, this._out]) {
+      if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    }
+
+    const sctx = this._scratchCtx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.clearRect(0, 0, W, H);
+    sctx.drawImage(ctx.canvas, 0, 0);
+    if (op.stencil) {
+      sctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
+      drawStencil(sctx, op.stencil, this._w, this._h);
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    const t = this._t();
+    const sx = Math.round((op.x * t.s + t.ox) * this._dpr);
+    const sy = Math.round((op.y * t.s + t.oy) * this._dpr);
+    if (sx < 0 || sy < 0 || sx >= W || sy >= H) return;
+
+    const src = sctx.getImageData(0, 0, W, H).data;
+    const seen = new Uint8Array(W * H);
+    const ALPHA = 40;   // anything fainter than this counts as empty space
+    if (src[(sy * W + sx) * 4 + 3] >= ALPHA) return;   // tapped a line, not a gap
+
+    // Scanline flood: push spans rather than pixels, which keeps the stack small.
+    const stack = [[sx, sx, sy, 0]];
+    const mask = new Uint8Array(W * H);
+    const empty = i => src[i * 4 + 3] < ALPHA;
+
+    while (stack.length) {
+      const [x1, x2, y] = stack.pop();
+      if (y < 0 || y >= H) continue;
+      let left = x1;
+      while (left > 0 && !seen[y * W + left - 1] && empty(y * W + left - 1)) left--;
+      let right = x2;
+      while (right < W - 1 && !seen[y * W + right + 1] && empty(y * W + right + 1)) right++;
+
+      for (let x = left; x <= right; x++) {
+        const i = y * W + x;
+        seen[i] = 1;
+        mask[i] = 1;
+      }
+      for (const ny of [y - 1, y + 1]) {
+        if (ny < 0 || ny >= H) continue;
+        let x = left;
+        while (x <= right) {
+          while (x <= right && (seen[ny * W + x] || !empty(ny * W + x))) x++;
+          if (x > right) break;
+          const start = x;
+          while (x <= right && !seen[ny * W + x] && empty(ny * W + x)) x++;
+          stack.push([start, x - 1, ny]);
+        }
+      }
+    }
+
+    // Paint the mask as a solid colour, then composite it normally so it
+    // blends with whatever is already on the canvas.
+    const out = this._outCtx.createImageData(W, H);
+    const px = out.data;
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(op.color.slice(i, i + 2), 16));
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      px[i * 4] = r;
+      px[i * 4 + 1] = g;
+      px[i * 4 + 2] = b;
+      px[i * 4 + 3] = 255;
+    }
+    this._outCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._outCtx.putImageData(out, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this._out, 0, 0);
+  }
+
+  /*
+   * Roughly what fraction of the stencil outline has been drawn over. Done at
+   * low resolution because it runs after every stroke and only needs to be
+   * good enough to decide whether to throw confetti.
+   */
+  coverage() {
+    if (!this.stencilId || !this._w) return 0;
+    const CW = 128;
+    const CH = Math.max(1, Math.round(CW * this._h / this._w));
+    if (!this._cov) {
+      this._cov = document.createElement('canvas');
+      this._covCtx = this._cov.getContext('2d', { willReadFrequently: true });
+    }
+    const c = this._cov;
+    const ctx = this._covCtx;
+    c.width = CW;
+    c.height = CH;
+
+    ctx.clearRect(0, 0, CW, CH);
+    ctx.drawImage(this.stencilEl, 0, 0, CW, CH);
+    const stencil = ctx.getImageData(0, 0, CW, CH).data;
+
+    ctx.clearRect(0, 0, CW, CH);
+    ctx.drawImage(this._base, 0, 0, CW, CH);
+    const art = ctx.getImageData(0, 0, CW, CH).data;
+
+    let total = 0;
+    let hit = 0;
+    for (let y = 0; y < CH; y++) {
+      for (let x = 0; x < CW; x++) {
+        if (stencil[(y * CW + x) * 4 + 3] < 30) continue;
+        total++;
+        // Allow a little slop: a child tracing near the line still counts.
+        let near = false;
+        for (let dy = -2; dy <= 2 && !near; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= CW || ny >= CH) continue;
+            if (art[(ny * CW + nx) * 4 + 3] > 30) { near = true; break; }
+          }
+        }
+        if (near) hit++;
+      }
+    }
+    return total ? hit / total : 0;
   }
 
   /* Re-renders every committed op into the offscreen base canvas. */
@@ -211,6 +381,16 @@ class DrawCanvas {
     else this._paint(this._baseCtx, op);
     this._composite();
     this._changed();
+    this._maybeCelebrate();
+  }
+
+  /* Fires once per stencil, when enough of the outline has been traced. */
+  _maybeCelebrate() {
+    if (!this.stencilId || this._celebrated === this.stencilId) return;
+    if (this.coverage() < 0.55) return;
+    this._celebrated = this.stencilId;
+    this.confetti();
+    if (this.onCelebrate) this.onCelebrate();
   }
 
   undo() {
@@ -258,6 +438,19 @@ class DrawCanvas {
     };
   }
 
+  /* Flattened picture (paper + stencil + artwork) for saving or sharing. */
+  toBlob() {
+    const out = document.createElement('canvas');
+    out.width = this.canvas.width;
+    out.height = this.canvas.height;
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#fff8ef';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(this.stencilEl, 0, 0);
+    ctx.drawImage(this._base, 0, 0);
+    return new Promise(res => out.toBlob(res, 'image/png'));
+  }
+
   loadDoc(doc) {
     if (!doc || !Array.isArray(doc.ops)) return false;
     this.ops = doc.ops;
@@ -296,7 +489,7 @@ class DrawCanvas {
       s.x += s.vx;
       s.y += s.vy;
       s.vy += 0.05;
-      s.life -= 0.03;
+      s.life -= s.decay || 0.03;
       if (s.life <= 0) { this._sparkles.splice(i, 1); continue; }
 
       ctx.globalAlpha = s.life;
@@ -322,6 +515,25 @@ class DrawCanvas {
       : null;
   }
 
+  /* Confetti burst for finishing a stencil. Shares the sparkle layer. */
+  confetti() {
+    for (let i = 0; i < 90; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 2 + Math.random() * 6;
+      this._sparkles.push({
+        x: this._w / 2,
+        y: this._h * 0.45,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 2,
+        life: 1,
+        decay: 0.012,
+        size: 3 + Math.random() * 5,
+        color: hslToHex(Math.floor(Math.random() * 360), 90, 55),
+      });
+    }
+    if (!this._sparkleRaf) this._sparkleLoop();
+  }
+
   /* ─── INPUT ─── */
 
   _pos(e) {
@@ -340,15 +552,26 @@ class DrawCanvas {
       return;
     }
 
+    if (this.mode === 'fill') {
+      const color = this.color === 'rainbow'
+        ? hslToHex((this._hue += 47) % 360, 90, 55)
+        : this.color;
+      this._commit({ type: 'fill', x: lp.x, y: lp.y, color, stencil: this.stencilId });
+      return;
+    }
+
     // Pointer capture keeps the stroke alive if the finger strays off the canvas.
     if (this.canvas.setPointerCapture) {
       try { this.canvas.setPointerCapture(e.pointerId); } catch (_) { /* not capturable */ }
     }
 
     // Each pointer gets its own stroke, so two fingers draw two lines.
+    const rainbow = this.color === 'rainbow';
     this._live.set(e.pointerId, {
       type: 'stroke',
-      color: this.color,
+      color: rainbow ? '#ff3b30' : this.color,
+      rainbow,
+      hue: rainbow ? (this._hue += 47) % 360 : undefined,
       size: this.size,
       glow: this.glowOn,
       points: [lp],

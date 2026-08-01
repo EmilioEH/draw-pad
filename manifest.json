@@ -1,12 +1,12 @@
 {
   "name": "Draw Pad",
   "short_name": "Draw",
-  "description": "Draw and trace dinosaur stencils",
+  "description": "Draw, trace and colour in dinosaurs",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f0e6d3",
-  "theme_color": "#f0e6d3",
+  "background_color": "#fff8ef",
+  "theme_color": "#fff8ef",
   "orientation": "portrait",
   "icons": [
     {
