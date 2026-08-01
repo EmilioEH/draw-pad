@@ -6,9 +6,11 @@ body{font-family:-apple-system,system-ui,BlinkMacSystemFont,'Segoe UI',Roboto,sa
 
 /* Canvas area */
 #canvasWrap{flex:1;position:relative;overflow:hidden}
-#stencilCanvas,#drawCanvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none}
+#stencilCanvas,#drawCanvas,#fxCanvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none}
 #stencilCanvas{z-index:1;pointer-events:none}
 #drawCanvas{z-index:2}
+/* Sparkles live here so they fade away instead of staining the drawing. */
+#fxCanvas{z-index:3;pointer-events:none}
 #drawCanvas:active{cursor:crosshair}
 
 /* ─── TOOLBAR ─── */
@@ -67,3 +69,11 @@ body{font-family:-apple-system,system-ui,BlinkMacSystemFont,'Segoe UI',Roboto,sa
 #actions{display:flex;gap:6px}
 .act-btn{width:36px;height:36px;border-radius:8px;border:none;background:#e8dccc;font-size:16px;cursor:pointer;transition:all .12s;display:flex;align-items:center;justify-content:center}
 .act-btn:active{transform:scale(.9)}
+
+/* Press-and-hold to clear: the ring fills as you hold, no reading required. */
+#clearBtn{position:relative;overflow:hidden;isolation:isolate;--hold:0%}
+/* Sits above the button background but below the icon, so the bin stays visible. */
+#clearBtn::before{content:'';position:absolute;inset:0;z-index:-1;background:#e63946;opacity:.85;
+  clip-path:inset(calc(100% - var(--hold)) 0 0 0);pointer-events:none}
+#clearBtn.holding:active{transform:none}
+#clearBtn.cleared{background:#2a9d8f}

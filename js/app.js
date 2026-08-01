@@ -1,12 +1,44 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const drawEl = document.getElementById('drawCanvas');
-  const stencilEl = document.getElementById('stencilCanvas');
-  const draw = new DrawCanvas(drawEl, stencilEl);
+  const draw = new DrawCanvas(
+    document.getElementById('drawCanvas'),
+    document.getElementById('stencilCanvas'),
+    document.getElementById('fxCanvas')
+  );
 
   draw.resize();
   draw.bind();
 
   window.addEventListener('resize', () => draw.resize());
+
+  /* ─── AUTOSAVE ─── */
+  const STORE_KEY = 'drawpad.doc';
+  let saveTimer = null;
+
+  function save() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(draw.getDoc()));
+    } catch (_) {
+      // Storage full or blocked (private mode). Drawing still works in memory.
+    }
+  }
+
+  draw.onChange = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 400);
+  };
+
+  try {
+    const saved = localStorage.getItem(STORE_KEY);
+    if (saved) draw.loadDoc(JSON.parse(saved));
+  } catch (_) {
+    // Corrupt or unreadable save — start with a blank page rather than failing.
+  }
+
+  // Don't lose the last few strokes if the app is closed mid-timer.
+  window.addEventListener('pagehide', save);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') save();
+  });
 
   /* ─── STENCILS ─── */
   document.querySelectorAll('.stencil-btn').forEach(btn => {
@@ -18,13 +50,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   /* ─── STAMPS ─── */
+  function currentStampSize() {
+    const b = document.querySelector('.stamp-size-btn.active');
+    return b ? parseInt(b.dataset.stampsize) : 48;
+  }
+
   document.querySelectorAll('.stamp-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.stamp-btn').forEach(b => b.classList.remove('on'));
       btn.classList.add('on');
-      const sizeBtn = document.querySelector('.stamp-size-btn.active');
-      const size = sizeBtn ? parseInt(sizeBtn.dataset.stampsize) : 48;
-      draw.setStamp(btn.dataset.stamp, size);
+      // The button's own glyph is the stamp — no second list to keep in sync.
+      draw.setStamp(btn.textContent.trim(), currentStampSize());
       updateModeUI('stamp');
     });
   });
@@ -33,10 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.stamp-size-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      const activeStamp = document.querySelector('.stamp-btn.on');
-      if (activeStamp) {
-        draw.setStamp(activeStamp.dataset.stamp, parseInt(btn.dataset.stampsize));
-      }
+      const active = document.querySelector('.stamp-btn.on');
+      if (active) draw.setStamp(active.textContent.trim(), parseInt(btn.dataset.stampsize));
     });
   });
 
@@ -60,103 +94,83 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       btn.classList.toggle('active');
-      const toggle = btn.dataset.toggle;
-      if (toggle === 'sparkle') draw.setSparkle(btn.classList.contains('active'));
-      if (toggle === 'glow') draw.setGlow(btn.classList.contains('active'));
-      if (toggle === 'smooth') draw.setSmoothing(btn.classList.contains('active'));
+      const on = btn.classList.contains('active');
+      if (btn.dataset.toggle === 'sparkle') draw.setSparkle(on);
+      if (btn.dataset.toggle === 'glow') draw.setGlow(on);
     });
   });
 
-  /* ─── COLORS ─── */
-  let mixing = false;
-  let mixColor1 = null;
-  let mixColor2 = null;
+  /* ─── COLOURS ─── */
+  document.querySelectorAll('.c-btn:not(.mix-btn)').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (mixing) { pickMixColor(btn); return; }
+      document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      draw.setColor(btn.dataset.color);
+    });
+  });
+
+  // Select the swatch that matches the engine's actual default colour.
+  const defaultSwatch = document.querySelector(`.c-btn[data-color="${DEFAULT_COLOR}"]`)
+    || document.querySelector('.c-btn');
+  defaultSwatch.classList.add('on');
+  draw.setColor(defaultSwatch.dataset.color);
+
+  /* ─── COLOUR MIXING ─── */
+  const mixBtn = document.querySelector('.mix-btn');
   const mixBar = document.getElementById('mixBar');
   const mixPreview = document.getElementById('mixPreview');
-
-  function hexToRgb(hex) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return { r, g, b };
-  }
-
-  function rgbToHex(r, g, b) {
-    return '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');
-  }
+  let mixing = false;
+  let mixA = null;
+  let mixB = null;
 
   function mixColors(c1, c2) {
-    const a = hexToRgb(c1);
-    const b = hexToRgb(c2);
-    return rgbToHex(
-      (a.r + b.r) / 2,
-      (a.g + b.g) / 2,
-      (a.b + b.b) / 2
-    );
+    const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    const [a, b] = [rgb(c1), rgb(c2)];
+    return '#' + a.map((v, i) => Math.round((v + b[i]) / 2).toString(16).padStart(2, '0')).join('');
   }
 
-  function updateMixPreview() {
-    if (mixColor1 && mixColor2) {
-      const mixed = mixColors(mixColor1, mixColor2);
-      mixPreview.style.background = mixed;
-      mixPreview.dataset.mixed = mixed;
-    } else if (mixColor1) {
-      mixPreview.style.background = mixColor1;
+  function pickMixColor(btn) {
+    if (!mixA) {
+      mixA = btn.dataset.color;
+      btn.classList.add('mix1');
+      mixPreview.style.background = mixA;
+    } else if (!mixB) {
+      mixB = btn.dataset.color;
+      btn.classList.add('mix2');
+      mixPreview.style.background = mixColors(mixA, mixB);
     }
   }
 
-  document.querySelectorAll('.c-btn:not(.mix-btn)').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (mixing) {
-        document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('mix1', 'mix2'));
-        if (!mixColor1) {
-          mixColor1 = btn.dataset.color;
-          btn.classList.add('mix1');
-        } else if (!mixColor2) {
-          mixColor2 = btn.dataset.color;
-          btn.classList.add('mix2');
-          updateMixPreview();
-        }
-      } else {
-        document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on'));
-        btn.classList.add('on');
-        draw.setColor(btn.dataset.color);
-      }
-    });
-  });
-
-  document.querySelector('.c-btn').classList.add('on');
-
-  document.querySelector('.mix-btn').addEventListener('click', () => {
-    mixing = !mixing;
+  function endMixing() {
+    mixing = false;
+    mixA = null;
+    mixB = null;
+    mixBar.classList.add('hidden');
     document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('mix1', 'mix2'));
-    mixBar.classList.toggle('hidden', !mixing);
-    mixColor1 = null;
-    mixColor2 = null;
+  }
+
+  mixBtn.addEventListener('click', () => {
+    if (mixing) { endMixing(); return; }
+    mixing = true;
+    mixA = null;
+    mixB = null;
+    document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('mix1', 'mix2'));
     mixPreview.style.background = '#ccc';
+    mixBar.classList.remove('hidden');
   });
 
   document.getElementById('mixApply').addEventListener('click', () => {
-    if (mixColor1 && mixColor2) {
-      const mixed = mixColors(mixColor1, mixColor2);
-      draw.setColor(mixed);
-      document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on', 'mix1', 'mix2'));
-      document.querySelector('.mix-btn').classList.add('on');
-      document.querySelector('.mix-btn').style.background = mixed;
-      mixing = false;
-      mixBar.classList.add('hidden');
-      mixColor1 = null;
-      mixColor2 = null;
-    }
+    if (!mixA || !mixB) return;
+    const mixed = mixColors(mixA, mixB);
+    draw.setColor(mixed);
+    document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on'));
+    mixBtn.classList.add('on');
+    mixBtn.style.background = mixed;
+    endMixing();
   });
 
-  document.getElementById('mixCancel').addEventListener('click', () => {
-    mixing = false;
-    mixBar.classList.add('hidden');
-    mixColor1 = null;
-    mixColor2 = null;
-    document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('mix1', 'mix2'));
-  });
+  document.getElementById('mixCancel').addEventListener('click', endMixing);
 
   /* ─── BRUSH SIZE ─── */
   document.querySelectorAll('.size-btn').forEach(btn => {
@@ -168,14 +182,49 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   /* ─── UNDO ─── */
-  document.getElementById('undoBtn').addEventListener('click', () => {
-    draw.undo();
-  });
+  document.getElementById('undoBtn').addEventListener('click', () => draw.undo());
 
-  /* ─── CLEAR ─── */
-  document.getElementById('clearBtn').addEventListener('click', () => {
-    if (confirm('Clear your drawing?')) {
+  /* ─── CLEAR (press and hold) ─── */
+  /*
+   * A text confirm() is unusable for a pre-reader, and a single tap wipes the
+   * page by accident. Holding for HOLD_MS with a ring that fills as you hold
+   * needs no reading, and clear is undoable anyway.
+   */
+  const clearBtn = document.getElementById('clearBtn');
+  const HOLD_MS = 1200;
+  let holdStart = 0;
+  let holdRaf = null;
+
+  function holdTick() {
+    const pct = Math.min(1, (performance.now() - holdStart) / HOLD_MS);
+    clearBtn.style.setProperty('--hold', (pct * 100).toFixed(1) + '%');
+    if (pct >= 1) {
+      endHold();
       draw.clear();
+      clearBtn.classList.add('cleared');
+      setTimeout(() => clearBtn.classList.remove('cleared'), 300);
+      return;
     }
-  });
+    holdRaf = requestAnimationFrame(holdTick);
+  }
+
+  function startHold(e) {
+    if (draw.isEmpty()) return;
+    e.preventDefault();
+    holdStart = performance.now();
+    clearBtn.classList.add('holding');
+    holdRaf = requestAnimationFrame(holdTick);
+  }
+
+  function endHold() {
+    if (holdRaf) cancelAnimationFrame(holdRaf);
+    holdRaf = null;
+    clearBtn.classList.remove('holding');
+    clearBtn.style.setProperty('--hold', '0%');
+  }
+
+  clearBtn.addEventListener('pointerdown', startHold);
+  clearBtn.addEventListener('pointerup', endHold);
+  clearBtn.addEventListener('pointercancel', endHold);
+  clearBtn.addEventListener('pointerleave', endHold);
 });

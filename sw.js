@@ -1,4 +1,4 @@
-const CACHE = 'draw-pad-v4';
+const CACHE = 'draw-pad-v5';
 const ASSETS = [
   '/',
   '/index.html',
@@ -27,12 +27,24 @@ self.addEventListener('activate', e => {
   );
 });
 
+/*
+ * Cache-first: this is an offline-first toy that must open instantly, even on a
+ * bad connection. Updates are picked up in the background on the next launch.
+ * Only successful same-origin GETs are cached, so error pages can't poison it.
+ */
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+
   e.respondWith(
-    fetch(e.request).then(r => {
-      const clone = r.clone();
-      caches.open(CACHE).then(c => c.put(e.request, clone));
-      return r;
-    }).catch(() => caches.match(e.request))
+    caches.match(e.request).then(hit => {
+      const network = fetch(e.request).then(r => {
+        if (r && r.ok && r.type === 'basic') {
+          const clone = r.clone();
+          caches.open(CACHE).then(c => c.put(e.request, clone));
+        }
+        return r;
+      }).catch(() => hit);
+      return hit || network;
+    })
   );
 });

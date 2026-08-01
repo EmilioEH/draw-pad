@@ -18,6 +18,7 @@
     <div id="canvasWrap">
       <canvas id="stencilCanvas"></canvas>
       <canvas id="drawCanvas"></canvas>
+      <canvas id="fxCanvas"></canvas>
     </div>
 
     <div id="toolbar">
@@ -52,7 +53,6 @@
         <button class="mode-btn active" data-mode="draw" aria-label="Draw"><span class="mode-icon">✏️</span><span class="mode-label">Draw</span></button>
         <button class="mode-btn toggle-btn" data-toggle="sparkle" aria-label="Sparkles"><span class="mode-icon">✨</span><span class="mode-label">Sparks</span></button>
         <button class="mode-btn toggle-btn" data-toggle="glow" aria-label="Glow"><span class="mode-icon">💡</span><span class="mode-label">Glow</span></button>
-        <button class="mode-btn toggle-btn" data-toggle="smooth" aria-label="Auto-smooth"><span class="mode-icon">〰️</span><span class="mode-label">Smooth</span></button>
         <button class="mode-btn" data-mode="stamp" aria-label="Stamps"><span class="mode-icon">⭐</span><span class="mode-label">Stamps</span></button>
       </div>
 
@@ -82,7 +82,7 @@
         </div>
         <div id="actions">
           <button id="undoBtn" class="act-btn" aria-label="Undo">↩</button>
-          <button id="clearBtn" class="act-btn" aria-label="Clear">🗑</button>
+          <button id="clearBtn" class="act-btn" aria-label="Clear — press and hold">🗑</button>
         </div>
       </div>
     </div>

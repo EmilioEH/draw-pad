@@ -16,9 +16,10 @@ function drawStencil(ctx, id, w, h) {
 }
 
 function setup(ctx) {
-  ctx.strokeStyle = 'rgba(60,60,60,0.5)';
+  // A child tracing this needs a line they can clearly see.
+  ctx.strokeStyle = 'rgba(70,70,70,0.75)';
   ctx.fillStyle = 'rgba(160,160,160,0.15)';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 }
@@ -45,9 +46,14 @@ function drawSmooth(ctx, pts, close) {
   ctx.stroke();
 }
 
-function drawArc(ctx, sc, cx, cy, radius) {
+/*
+ * `s` is the stencil's scale in CSS pixels, the same value sc() uses.
+ * Deriving the radius from ctx.canvas.width instead would use the device-pixel
+ * backing store, doubling these on any retina screen.
+ */
+function drawArc(ctx, sc, cx, cy, radius, s) {
   const [px, py] = sc(cx, cy);
-  const r = radius * Math.min(ctx.canvas.width, ctx.canvas.height) * 0.85;
+  const r = radius * s;
   ctx.beginPath();
   ctx.arc(px, py, r, Math.PI, 0, false);
   ctx.fill();
@@ -139,11 +145,11 @@ function drawStego(ctx, w, h) {
     sc(0.24, 0.70),
   ]);
 
-  drawArc(ctx, sc, 0.54, 0.20, 0.04);
-  drawArc(ctx, sc, 0.46, 0.24, 0.05);
-  drawArc(ctx, sc, 0.38, 0.28, 0.055);
-  drawArc(ctx, sc, 0.30, 0.32, 0.05);
-  drawArc(ctx, sc, 0.22, 0.36, 0.04);
+  drawArc(ctx, sc, 0.54, 0.20, 0.04, s);
+  drawArc(ctx, sc, 0.46, 0.24, 0.05, s);
+  drawArc(ctx, sc, 0.38, 0.28, 0.055, s);
+  drawArc(ctx, sc, 0.30, 0.32, 0.05, s);
+  drawArc(ctx, sc, 0.22, 0.36, 0.04, s);
 
   drawSmooth(ctx, [sc(0.06, 0.46), sc(0.02, 0.38), sc(0.10, 0.40)]);
   drawSmooth(ctx, [sc(0.06, 0.46), sc(0.00, 0.44), sc(0.08, 0.42)]);

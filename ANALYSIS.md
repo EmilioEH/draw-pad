@@ -7,6 +7,18 @@ Every defect in Part 1 was reproduced in a real browser (headless Chromium drivi
 the app over HTTP) rather than inferred from reading the source. Reproduction steps
 are included so each one can be re-checked.
 
+## Status
+
+**All ten defects in Part 1 are now fixed**, and `tests/smoke.js` covers them so they
+can't come back (`npm test`, 13 checks). Part 1 is kept as written — the original
+diagnosis — with each item marked.
+
+The **Part 2 recommendations are mostly still open**: the UI has not been restructured
+for the age group yet. Landed from Part 2 so far: smoothing is always on, the
+unreadable `confirm()` is now a press-and-hold, the drawing autosaves, and stencil
+contrast is raised. Still to do: fewer and bigger wordless controls, full-screen
+stencil/stamp pickers, sound, tap-to-fill, and redrawing the T-Rex and Triceratops.
+
 ---
 
 ## Part 1 — Defects (verified)
@@ -14,7 +26,7 @@ are included so each one can be re-checked.
 These are ordered by how badly they hurt a child using the app. The first five are,
 in my view, ship-blocking: they destroy the child's drawing.
 
-### 1. Undo erases the entire drawing, permanently — CRITICAL
+### 1. Undo erases the entire drawing, permanently — CRITICAL — FIXED
 
 `DrawCanvas.undo()` (js/canvas.js:83) sets `img.src` and calls `drawImage` on the
 very next line:
@@ -45,7 +57,7 @@ Fix: don't round-trip through PNG at all — keep a list of strokes (points, col
 width) and re-render, or hold `ImageBitmap`/`ImageData` snapshots. If images are
 kept, you must await `decode()`/`onload` before clearing.
 
-### 2. Two fingers on the screen produce a scribble — CRITICAL
+### 2. Two fingers on the screen produce a scribble — CRITICAL — FIXED
 
 `this.drawing` and `this._lastPos` are single values on the instance, shared by every
 pointer. With two fingers down, each `pointermove` draws a line from *the other
@@ -66,7 +78,7 @@ the tablet to a sibling mid-drawing. Every one of those produces a ruined pictur
 Fix: key the drawing state by `e.pointerId` (a `Map` of in-flight strokes), and call
 `setPointerCapture`.
 
-### 3. Rotating the tablet erases the drawing — CRITICAL
+### 3. Rotating the tablet erases the drawing — CRITICAL — FIXED
 
 `resize()` assigns `canvas.width`, which resets the bitmap to transparent, and
 nothing restores the previous contents.
@@ -75,7 +87,7 @@ nothing restores the previous contents.
 
 Fix: snapshot to an offscreen canvas before resizing and blit back after.
 
-### 4. The selected colour is a lie
+### 4. The selected colour is a lie — FIXED
 
 `index.html` renders the red swatch, and `app.js:128` marks the first swatch `.on`,
 but `DrawCanvas`'s constructor defaults `this.color = '#1d3557'` (navy). The child
@@ -83,7 +95,7 @@ sees red selected and draws in navy until they tap a colour.
 
 **Measured:** UI shows `#e63946`; pixels drawn are RGB `[29, 52, 87]`.
 
-### 5. Stegosaurus plates are double-size on every real device
+### 5. Stegosaurus plates are double-size on every real device — FIXED
 
 `drawArc()` (js/stencils.js:50) computes its radius from `ctx.canvas.width`, which is
 the *device-pixel* backing store, while every other coordinate goes through `sc()`
@@ -93,7 +105,7 @@ tablet — the plates render at twice their intended size and swamp the animal's
 This is invisible in a DPR-1 desktop browser, which is presumably how it survived.
 Fix: use `this._w`/`this._h` (CSS pixels), consistent with the rest of the file.
 
-### 6. A stroke does not resume when the finger re-enters the canvas
+### 6. A stroke does not resume when the finger re-enters the canvas — FIXED
 
 `pointerleave` is wired to `_end` (canvas.js:326), and there's no pointer capture. A
 child who drags past the edge of the canvas and back — constantly, at this age — has
@@ -102,7 +114,7 @@ their stroke silently terminated and must lift and re-tap to continue.
 **Measured:** pixel count identical before and after the finger returns to the canvas
 while still held down.
 
-### 7. Sparkles never fade; they permanently stain the drawing
+### 7. Sparkles never fade; they permanently stain the drawing — FIXED
 
 `_updateSparkles()` draws particles directly onto the artwork canvas and never
 erases them. The `life`/`globalAlpha` fade is written as though the layer were being
@@ -115,20 +127,20 @@ particles had supposedly expired.
 
 Fix: render particles on a third, transient canvas above the artwork.
 
-### 8. Everything is lost on close, and Clear is unrecoverable
+### 8. Everything is lost on close, and Clear is unrecoverable — FIXED
 
 There is no persistence: reloading the page yields an empty canvas (measured: 2568
 pixels → 0). `clear()` also resets `undoStack = []`, so it cannot be undone — and it's
 gated behind `confirm('Clear your drawing?')`, a text dialog that a 3–6 year old
 cannot read and will dismiss at random.
 
-### 9. Glow is invisible and expensive
+### 9. Glow is invisible and expensive — FIXED
 
 `setGlow` applies `filter: drop-shadow(0 0 12px rgba(255,255,255,0.8))` to the whole
 canvas element — a white glow on a cream (`#fff3e6`) background, so it barely shows,
 while forcing a full-canvas GPU filter pass on every frame during drawing.
 
-### 10. Service worker is network-first and caches failures
+### 10. Service worker is network-first and caches failures — FIXED
 
 `sw.js:30` tries the network first for every request, so an offline-first PWA is
 online-dependent for launch speed. It also `cache.put`s any response it receives,
