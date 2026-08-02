@@ -1,0 +1,15 @@
+# wrangler.jsonc serves the repo root, so everything that is not part of the
+# shipped app has to be excluded here — otherwise node_modules alone would add
+# thousands of files to the deployed asset bundle.
+node_modules
+tests
+.git
+.github
+.wrangler
+package.json
+package-lock.json
+wrangler.jsonc
+.assetsignore
+.gitignore
+README.md
+ANALYSIS.md
