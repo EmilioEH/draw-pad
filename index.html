@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#f0e6d3">
+  <meta name="theme-color" content="#fff8ef">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="description" content="Draw Pad — draw and trace dinosaurs">
@@ -18,76 +18,61 @@
     <div id="canvasWrap">
       <canvas id="stencilCanvas"></canvas>
       <canvas id="drawCanvas"></canvas>
+      <canvas id="fxCanvas"></canvas>
+
+      <!-- Kept off the toolbar and away from the drawing controls, so the
+           destructive ones are hard to hit by accident. -->
+      <div id="floatTools">
+        <button id="undoBtn" class="float-btn" aria-label="Undo">↩</button>
+        <button id="clearBtn" class="float-btn hold-btn" aria-label="Clear — press and hold">🗑</button>
+        <button id="saveBtn" class="float-btn hold-btn" aria-label="Save picture — press and hold">💾</button>
+        <button id="muteBtn" class="float-btn" aria-label="Sound on or off">🔊</button>
+      </div>
     </div>
 
     <div id="toolbar">
-      <div id="stencilRow">
-        <button class="stencil-btn" data-stencil="none" aria-label="No stencil">✕</button>
-        <button class="stencil-btn" data-stencil="trex" aria-label="T-Rex">🦖</button>
-        <button class="stencil-btn" data-stencil="stego" aria-label="Stegosaurus">🦕</button>
-        <button class="stencil-btn" data-stencil="trike" aria-label="Triceratops">🐲</button>
-        <button class="stencil-btn" data-stencil="brachio" aria-label="Brachiosaurus">🦒</button>
-        <button class="stencil-btn" data-stencil="ptera" aria-label="Pterodactyl">🦅</button>
+      <div id="colors">
+        <button class="c-btn" data-color="#ff3b30" style="background:#ff3b30" aria-label="Red"></button>
+        <button class="c-btn" data-color="#ff9500" style="background:#ff9500" aria-label="Orange"></button>
+        <button class="c-btn" data-color="#ffcc00" style="background:#ffcc00" aria-label="Yellow"></button>
+        <button class="c-btn" data-color="#34c759" style="background:#34c759" aria-label="Green"></button>
+        <button class="c-btn" data-color="#007aff" style="background:#007aff" aria-label="Blue"></button>
+        <button class="c-btn" data-color="#af52de" style="background:#af52de" aria-label="Purple"></button>
+        <button class="c-btn" data-color="#ff2d92" style="background:#ff2d92" aria-label="Pink"></button>
+        <button class="c-btn" data-color="#1c1c1e" style="background:#1c1c1e" aria-label="Black"></button>
+        <button class="c-btn rainbow-btn" data-color="rainbow" aria-label="Rainbow"></button>
       </div>
 
-      <div id="stampRow" class="hidden">
-        <button class="stamp-btn" data-stamp="star">⭐</button>
-        <button class="stamp-btn" data-stamp="heart">❤️</button>
-        <button class="stamp-btn" data-stamp="flower">🌸</button>
-        <button class="stamp-btn" data-stamp="smile">😊</button>
-        <button class="stamp-btn" data-stamp="sun">☀️</button>
-        <button class="stamp-btn" data-stamp="moon">🌙</button>
-        <button class="stamp-btn" data-stamp="cloud">☁️</button>
-        <button class="stamp-btn" data-stamp="tree">🌳</button>
-        <button class="stamp-btn" data-stamp="fish">🐟</button>
-        <button class="stamp-btn" data-stamp="butterfly">🦋</button>
-        <div class="stamp-size-row">
-          <button class="stamp-size-btn" data-stampsize="32">S</button>
-          <button class="stamp-size-btn active" data-stampsize="48">M</button>
-          <button class="stamp-size-btn" data-stampsize="72">L</button>
-        </div>
+      <div id="tools">
+        <button class="size-btn" data-size="8" aria-label="Thin"><span class="dot" style="--d:9px"></span></button>
+        <button class="size-btn active" data-size="18" aria-label="Medium"><span class="dot" style="--d:17px"></span></button>
+        <button class="size-btn" data-size="34" aria-label="Thick"><span class="dot" style="--d:26px"></span></button>
+        <button class="tool-btn" data-mode="fill" aria-label="Fill">🪣</button>
+        <button class="tool-btn" data-toggle="magic" aria-label="Magic sparkles">✨</button>
+        <button class="tool-btn" id="stampsBtn" aria-label="Stickers">⭐</button>
+        <button class="tool-btn" id="dinosBtn" aria-label="Dinosaurs">🦖</button>
       </div>
+    </div>
 
-      <div id="modeRow">
-        <button class="mode-btn active" data-mode="draw" aria-label="Draw"><span class="mode-icon">✏️</span><span class="mode-label">Draw</span></button>
-        <button class="mode-btn toggle-btn" data-toggle="sparkle" aria-label="Sparkles"><span class="mode-icon">✨</span><span class="mode-label">Sparks</span></button>
-        <button class="mode-btn toggle-btn" data-toggle="glow" aria-label="Glow"><span class="mode-icon">💡</span><span class="mode-label">Glow</span></button>
-        <button class="mode-btn toggle-btn" data-toggle="smooth" aria-label="Auto-smooth"><span class="mode-icon">〰️</span><span class="mode-label">Smooth</span></button>
-        <button class="mode-btn" data-mode="stamp" aria-label="Stamps"><span class="mode-icon">⭐</span><span class="mode-label">Stamps</span></button>
-      </div>
+    <!-- Full-screen pickers: choosing what to draw is its own moment, and it
+         gets the whole screen instead of a cramped strip. -->
+    <div id="stencilPicker" class="picker hidden">
+      <div class="picker-grid" id="stencilGrid"></div>
+      <button class="picker-close" aria-label="Back">✓</button>
+    </div>
 
-      <div id="controls">
-        <div id="colors">
-          <button class="c-btn" data-color="#e63946" style="background:#e63946"></button>
-          <button class="c-btn" data-color="#f4a261" style="background:#f4a261"></button>
-          <button class="c-btn" data-color="#e9c46a" style="background:#e9c46a"></button>
-          <button class="c-btn" data-color="#2a9d8f" style="background:#2a9d8f"></button>
-          <button class="c-btn" data-color="#457b9d" style="background:#457b9d"></button>
-          <button class="c-btn" data-color="#7b2cbf" style="background:#7b2cbf"></button>
-          <button class="c-btn" data-color="#f4a1c1" style="background:#f4a1c1"></button>
-          <button class="c-btn" data-color="#1d3557" style="background:#1d3557"></button>
-          <button class="c-btn mix-btn" data-color="#mixed" aria-label="Mix colors">
-            <span class="mix-icon">🎨</span>
-          </button>
-        </div>
-        <div id="mixBar" class="hidden">
-          <div id="mixPreview"></div>
-          <button id="mixApply" class="act-btn">OK</button>
-          <button id="mixCancel" class="act-btn">✕</button>
-        </div>
-        <div id="sizeRow">
-          <button class="size-btn" data-size="4">S</button>
-          <button class="size-btn active" data-size="10">M</button>
-          <button class="size-btn" data-size="20">L</button>
-        </div>
-        <div id="actions">
-          <button id="undoBtn" class="act-btn" aria-label="Undo">↩</button>
-          <button id="clearBtn" class="act-btn" aria-label="Clear">🗑</button>
-        </div>
+    <div id="stampPicker" class="picker hidden">
+      <div class="picker-grid" id="stampGrid"></div>
+      <div class="picker-sizes">
+        <button class="stamp-size-btn" data-stampsize="40" aria-label="Small sticker"><span class="dot" style="--d:14px"></span></button>
+        <button class="stamp-size-btn active" data-stampsize="72" aria-label="Medium sticker"><span class="dot" style="--d:22px"></span></button>
+        <button class="stamp-size-btn" data-stampsize="120" aria-label="Big sticker"><span class="dot" style="--d:32px"></span></button>
       </div>
+      <button class="picker-close" aria-label="Back">✓</button>
     </div>
   </div>
 
+  <script src="js/sound.js"></script>
   <script src="js/stencils.js"></script>
   <script src="js/canvas.js"></script>
   <script src="js/app.js"></script>
