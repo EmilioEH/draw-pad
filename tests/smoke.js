@@ -14,9 +14,50 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const PORT = 8123;
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
+
+/*
+ * `npm install` fetches the playwright library but not its browser binaries,
+ * so launching can fail on a clean checkout. Try playwright's own browser
+ * first, then any Chrome/Chromium already on the machine, and only then give
+ * up — with an instruction rather than a stack trace.
+ */
+async function launchBrowser() {
+  const candidates = [];
+  if (process.env.CHROME_PATH) candidates.push(process.env.CHROME_PATH);
+
+  const pwRoot = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (pwRoot && fs.existsSync(pwRoot)) {
+    for (const dir of fs.readdirSync(pwRoot).filter(d => d.startsWith('chromium-'))) {
+      candidates.push(
+        path.join(pwRoot, dir, 'chrome-linux', 'chrome'),
+        path.join(pwRoot, dir, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+      );
+    }
+  }
+  candidates.push(
+    '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  );
+
+  // Playwright's bundled browser, if `npx playwright install` has been run.
+  try {
+    return await chromium.launch();
+  } catch (_) { /* fall through to whatever is on the machine */ }
+
+  for (const exe of candidates) {
+    if (!exe || !fs.existsSync(exe)) continue;
+    try {
+      return await chromium.launch({ executablePath: exe });
+    } catch (_) { /* try the next one */ }
+  }
+
+  console.error('\nCould not start a browser for the smoke tests.');
+  console.error('Install one with:\n\n    npx playwright install chromium\n');
+  console.error('or point CHROME_PATH at an existing Chrome/Chromium binary.\n');
+  process.exit(1);
+}
 
 let passed = 0;
 let failed = 0;
@@ -26,6 +67,7 @@ function check(name, ok, detail) {
   else { failed++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
+// Port 0 lets the OS pick a free port, so a busy port can't fail the run.
 const serve = () => new Promise(res => {
   const server = http.createServer((req, rq) => {
     const rel = decodeURIComponent(req.url.split('?')[0]);
@@ -35,7 +77,7 @@ const serve = () => new Promise(res => {
       rq.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
       rq.end(data);
     });
-  }).listen(PORT, () => res(server));
+  }).listen(0, () => res(server));
 });
 
 // Count non-transparent pixels on the drawing canvas.
@@ -49,9 +91,8 @@ const painted = page => page.evaluate(() => {
 
 (async () => {
   const server = await serve();
-  const browser = await chromium.launch({
-    executablePath: process.env.CHROME_PATH || undefined,
-  });
+  const PORT = server.address().port;
+  const browser = await launchBrowser();
 
   const open = async (opts = {}) => {
     const page = await browser.newPage({
