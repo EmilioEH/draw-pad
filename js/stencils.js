@@ -6,8 +6,13 @@ const STENCILS = {
   ptera: { name: 'Pterodactyl', draw: drawPtera },
 };
 
+/*
+ * Draws the outline into whatever transform the caller has already set, and
+ * deliberately does not clear first: tap-to-fill composites the outline on top
+ * of the child's artwork to use both as boundaries, and a clear here wiped the
+ * artwork out from under it.
+ */
 function drawStencil(ctx, id, w, h) {
-  ctx.clearRect(0, 0, w, h);
   if (id && STENCILS[id]) {
     ctx.save();
     STENCILS[id].draw(ctx, w, h);

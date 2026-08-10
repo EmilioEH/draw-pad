@@ -352,9 +352,95 @@ under a second.
 
 ### Worth doing next
 
-- The fill runs at device resolution on the main thread. It is fine for a tap
-  (tens of milliseconds), but replaying a history with many fills after an undo
-  is O(fills x pixels). If that ever bites, cache a flattened bitmap.
 - Stencil artwork is still hand-tuned coordinate arrays. Authoring them as SVG
   paths would let a designer iterate without touching code.
 - There is no redo button, though the engine supports it.
+
+## Part 4 — A second pass, from watching a child use it
+
+Reported as "a bit buggy and janky" rather than as specific faults, so this pass
+started by measuring the app under a child's usage pattern instead of reading
+for suspects. Timings are from headless Chromium at dpr 2 on a 390×844 viewport;
+a real tablet is slower, so treat them as lower bounds. All eight are fixed and
+covered by `tests/smoke.js`, now 38 checks.
+
+### 1. Fill ignored her own lines whenever an outline was showing — FIXED
+
+The worst of them. To use the printed outline as a wall, the fill composites it
+on top of a copy of the artwork — but `drawStencil()` opened with a `clearRect`,
+so it wiped the artwork out of that copy first. With a dinosaur on screen, the
+outline was the *only* boundary: drawing a closed box and tapping inside it
+flooded 89% of the page instead of 11%.
+
+`drawStencil()` no longer clears; the two callers that need a clean layer do it
+themselves.
+
+### 2. Tapping a coloured area did nothing — FIXED
+
+Fill only ever flooded blank paper, so the moment a region had colour in it,
+every further tap was ignored — and each ignored tap still went into the undo
+history, so undo appeared broken too. It now floods whatever colour is under the
+finger, which is what a paint bucket does everywhere else, and a fill that
+changes no pixels is not recorded at all. Tapping the printed outline is still
+deliberately inert: it is a guide, not paint.
+
+### 3. Every fill froze the app for a third of a second — FIXED
+
+337ms, on the main thread, per tap — long enough for a child to conclude it
+didn't work and tap again. It flooded at device resolution: 2.6M pixels on a
+retina screen. It now works at CSS resolution, a quarter of that, and the mask
+is upscaled with smoothing off so the edge cannot bleed over the line it just
+stopped at. ~70ms.
+
+### 4. Undo got slower with every fill in the drawing — FIXED
+
+Undo replays the history, and each replayed fill re-ran the whole flood: 362ms
+after five fills, and rising. History is a stack, so nothing before a surviving
+op can ever change — a fill's result is stamped into a `WeakMap` and replayed as
+a single `drawImage`. 6.7ms, flat. (This is the "cache a flattened bitmap"
+suggestion from the previous pass; it did bite.)
+
+### 5. Every URL-bar slide re-rendered the picture — FIXED
+
+Phones fire `resize` when the URL bar hides, when the keyboard opens, on scroll.
+Each one rebuilt the entire drawing — 464ms with a few fills in it, mid-stroke.
+`resize()` now returns immediately when the size and dpr are unchanged, and the
+listener coalesces a burst into one call 120ms later. `orientationchange` and
+`visualViewport` are handled too.
+
+### 6. A hitch at the end of every single stroke — FIXED
+
+The finished-the-outline check ran after every commit: two canvas readbacks plus
+a 5×5 neighbourhood test over every pixel, ~10ms a stroke. The neighbourhood
+test is now two separable dilation passes, and the check is throttled to a few
+times a second with a trailing run so the celebration still fires promptly. 12
+strokes now cost at most two readbacks instead of twelve.
+
+### 7. No way out of sticker mode, and no sign she was in it — FIXED
+
+Picking a sticker set the mode permanently. Nothing in the toolbar showed it,
+and no control returned to drawing, so every tap on the paper kept producing
+stickers until a grown-up found the bucket button and toggled it twice. The
+stickers button now lights up like the bucket, and tapping a colour or a brush
+size — the two things that mean "I want to draw" — returns to drawing.
+
+### 8. The outline slid off the drawing when the tablet was turned — FIXED
+
+The artwork lives in its own coordinate space so it survives a resize; the
+outline was laid out in screen space. The two scale by different amounts, so
+rotating a half-traced dinosaur left the tracing and the outline different
+sizes. The outline is now drawn in the artwork's space, and moves with it.
+
+### Smaller things in the same pass
+
+- Sustained scribbling with the magic brush kept ~180 particles alive, each an
+  eight-point star redrawn every frame. Capped at 90.
+- A busy page serialised to ~200KB of localStorage after every stroke. Points
+  are stored as a flat `[x, y, …]` list instead of `{x, y}` objects, roughly
+  halving that; old saves still load.
+- Two fingers on the bin started two hold timers; the second could fire the
+  action again. One press at a time now, with pointer capture so a wobbling
+  finger no longer cancels the hold, and a window-level release so the button
+  can't get stuck mid-hold.
+- `loadDoc()` accepted anything shaped like an array and could throw on a
+  corrupt save. It now drops ops it can't read and keeps the rest.

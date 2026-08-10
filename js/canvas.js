@@ -1,6 +1,9 @@
 /* Default brush colour. Kept here so index.html and DrawCanvas cannot disagree. */
 const DEFAULT_COLOR = '#ff3b30';
 
+/* Byte order of a Uint32 view over ImageData, used by the flood fill. */
+const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x11223344]).buffer)[0] === 0x44;
+
 function hslToHex(h, s, l) {
   const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
   const f = n => {
@@ -59,6 +62,15 @@ class DrawCanvas {
   resize() {
     const rect = this.canvas.parentElement.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    // A hidden or not-yet-laid-out element would blow the canvases away.
+    if (!rect.width || !rect.height) return;
+
+    // Mobile browsers fire resize for things that are not resizes — the URL
+    // bar sliding, the keyboard, a scroll. Re-rendering the whole picture for
+    // each of those is a visible freeze, so ignore the ones that change nothing.
+    if (this.ctx && rect.width === this._w && rect.height === this._h && dpr === this._dpr) return;
+
     this._dpr = dpr;
     this._w = rect.width;
     this._h = rect.height;
@@ -79,6 +91,7 @@ class DrawCanvas {
     }
     this._base.width = this.canvas.width;
     this._base.height = this.canvas.height;
+    this._fillCache = new WeakMap();   // worked out for the old size
 
     // An empty document adopts the current size, so fresh drawings are 1:1.
     if (!this.ref || this.ops.length === 0) this.ref = { w: rect.width, h: rect.height };
@@ -97,6 +110,20 @@ class DrawCanvas {
   _toLogical(x, y) {
     const t = this._t();
     return { x: (x - t.ox) / t.s, y: (y - t.oy) / t.s };
+  }
+
+  /*
+   * Puts a context into logical space, optionally at a fraction of the device
+   * resolution. Everything that has to line up with the artwork — the outline,
+   * the fill's scratch copy of it — goes through here, so a resize or a rotate
+   * moves the outline and the drawing together instead of sliding them apart.
+   */
+  _useLogical(ctx, scale = 1) {
+    const t = this._t();
+    const k = this._dpr * scale;
+    ctx.setTransform(k, 0, 0, k, 0, 0);
+    ctx.translate(t.ox, t.oy);
+    ctx.scale(t.s, t.s);
   }
 
   /* ─── SETTINGS ─── */
@@ -120,7 +147,11 @@ class DrawCanvas {
   drawStencil() {
     this.sCtx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
     this.sCtx.clearRect(0, 0, this._w, this._h);
-    if (this.stencilId) drawStencil(this.sCtx, this.stencilId, this._w, this._h);
+    if (!this.stencilId) return;
+    // In logical space, not screen space: the outline has to stay welded to
+    // the lines drawn on it when the tablet is turned sideways.
+    this._useLogical(this.sCtx);
+    drawStencil(this.sCtx, this.stencilId, this.ref.w, this.ref.h);
   }
 
   /* ─── RENDERING ─── */
@@ -129,10 +160,7 @@ class DrawCanvas {
   _paint(ctx, op) {
     if (op.type === 'fill') { this._paintFill(ctx, op); return; }
 
-    const t = this._t();
-    ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
-    ctx.translate(t.ox, t.oy);
-    ctx.scale(t.s, t.s);
+    this._useLogical(ctx);
     ctx.save();
 
     if (op.type === 'stamp') {
@@ -203,16 +231,46 @@ class DrawCanvas {
   /* ─── FLOOD FILL ─── */
   /*
    * Tapping to fill a region is far easier than tracing for a small child, so
-   * it has to respect the stencil outline as a boundary even though the
-   * stencil lives on a separate layer. We composite art + stencil into a
+   * it has to respect two kinds of boundary: the outline, which lives on its
+   * own layer, and the child's own lines. We composite art + outline into a
    * scratch canvas, flood there, and paint the resulting mask into the artwork.
    *
-   * The op records which stencil was showing, so replaying history is exact.
+   * Two things matter for how this feels:
+   *
+   *  - It floods everything matching the colour under the finger, not only
+   *    blank paper, so tapping a red patch with blue on turns it blue. Filling
+   *    only empty space meant most repeat taps did nothing at all.
+   *  - It works at CSS resolution rather than device resolution, a quarter of
+   *    the pixels on a retina screen. A fill used to block the page for a third
+   *    of a second, which is long enough for a small child to tap again.
+   *
+   * The op records which outline was showing, so replaying history is exact.
+   * Returns true if it actually changed anything.
    */
   _paintFill(ctx, op) {
     const W = ctx.canvas.width;
     const H = ctx.canvas.height;
-    if (!W || !H) return;
+    if (!W || !H) return false;
+
+    const step = Math.max(1, Math.round(this._dpr));
+    const w = Math.max(1, Math.round(W / step));
+    const h = Math.max(1, Math.round(H / step));
+
+    /*
+     * Undo and redo replay the whole history, and re-flooding every earlier
+     * fill made each press of the undo button slower than the last. History is
+     * a stack, so nothing before a surviving op can ever change: once a fill
+     * has been worked out it can simply be stamped back down. Resizing changes
+     * the working resolution and throws the lot away.
+     */
+    const cached = this._fillCache && this._fillCache.get(op);
+    if (cached && cached.width === w && cached.height === h) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(cached, 0, 0, w, h, 0, 0, W, H);
+      ctx.imageSmoothingEnabled = true;
+      return true;
+    }
 
     if (!this._scratch) {
       this._scratch = document.createElement('canvas');
@@ -221,76 +279,122 @@ class DrawCanvas {
       this._outCtx = this._out.getContext('2d');
     }
     for (const c of [this._scratch, this._out]) {
-      if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
-    }
-
-    const sctx = this._scratchCtx;
-    sctx.setTransform(1, 0, 0, 1, 0, 0);
-    sctx.clearRect(0, 0, W, H);
-    sctx.drawImage(ctx.canvas, 0, 0);
-    if (op.stencil) {
-      sctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
-      drawStencil(sctx, op.stencil, this._w, this._h);
-      sctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     }
 
     const t = this._t();
-    const sx = Math.round((op.x * t.s + t.ox) * this._dpr);
-    const sy = Math.round((op.y * t.s + t.oy) * this._dpr);
-    if (sx < 0 || sy < 0 || sx >= W || sy >= H) return;
+    const sx = Math.round((op.x * t.s + t.ox) * this._dpr / step);
+    const sy = Math.round((op.y * t.s + t.oy) * this._dpr / step);
+    if (sx < 0 || sy < 0 || sx >= w || sy >= h) return false;
 
-    const src = sctx.getImageData(0, 0, W, H).data;
-    const seen = new Uint8Array(W * H);
+    const sctx = this._scratchCtx;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.clearRect(0, 0, w, h);
+    sctx.drawImage(ctx.canvas, 0, 0, w, h);
+
     const ALPHA = 40;   // anything fainter than this counts as empty space
-    if (src[(sy * W + sx) * 4 + 3] >= ALPHA) return;   // tapped a line, not a gap
+    // Read the artwork on its own first: it tells us later whether the finger
+    // landed on the child's paint or on the printed outline.
+    const artAlpha = sctx.getImageData(sx, sy, 1, 1).data[3];
 
-    // Scanline flood: push spans rather than pixels, which keeps the stack small.
-    const stack = [[sx, sx, sy, 0]];
-    const mask = new Uint8Array(W * H);
-    const empty = i => src[i * 4 + 3] < ALPHA;
+    if (op.stencil) {
+      this._useLogical(sctx, 1 / step);
+      drawStencil(sctx, op.stencil, this.ref.w, this.ref.h);
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    const d = sctx.getImageData(0, 0, w, h).data;
+    const si = (sy * w + sx) * 4;
+    const tr = d[si], tg = d[si + 1], tb = d[si + 2], ta = d[si + 3];
+
+    // The outline is a guide, not paint: tapping it should do nothing rather
+    // than recolour it.
+    if (ta >= ALPHA && artAlpha < ALPHA) return false;
+
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(op.color.slice(i, i + 2), 16));
+    if (![r, g, b].every(v => v >= 0 && v <= 255)) return false;
+    // Already this colour — filling it again would only cost an undo press.
+    if (ta >= ALPHA && Math.abs(r - tr) <= 8 && Math.abs(g - tg) <= 8 && Math.abs(b - tb) <= 8) return false;
+
+    // One linear pass marks every pixel the flood is allowed to cross, so the
+    // flood itself only ever reads a single byte per pixel.
+    const TOL = 40;
+    const open = new Uint8Array(w * h);
+    const blank = ta < ALPHA;
+    for (let i = 0, p = 0; i < open.length; i++, p += 4) {
+      const a = d[p + 3];
+      if (blank) { if (a < ALPHA) open[i] = 1; continue; }
+      if (a < ALPHA) continue;
+      if (Math.abs(d[p] - tr) <= TOL && Math.abs(d[p + 1] - tg) <= TOL
+        && Math.abs(d[p + 2] - tb) <= TOL) open[i] = 1;
+    }
+
+    // Scanline flood: push spans rather than pixels, which keeps the stack
+    // small. The mask doubles as the visited set.
+    const mask = new Uint8Array(w * h);
+    const stack = [sx, sx, sy];
+    let filled = 0;
 
     while (stack.length) {
-      const [x1, x2, y] = stack.pop();
-      if (y < 0 || y >= H) continue;
+      const y = stack.pop();
+      const x2 = stack.pop();
+      const x1 = stack.pop();
+      const row = y * w;
       let left = x1;
-      while (left > 0 && !seen[y * W + left - 1] && empty(y * W + left - 1)) left--;
+      while (left > 0 && !mask[row + left - 1] && open[row + left - 1]) left--;
       let right = x2;
-      while (right < W - 1 && !seen[y * W + right + 1] && empty(y * W + right + 1)) right++;
+      while (right < w - 1 && !mask[row + right + 1] && open[row + right + 1]) right++;
 
       for (let x = left; x <= right; x++) {
-        const i = y * W + x;
-        seen[i] = 1;
-        mask[i] = 1;
+        if (!mask[row + x]) { mask[row + x] = 1; filled++; }
       }
       for (const ny of [y - 1, y + 1]) {
-        if (ny < 0 || ny >= H) continue;
+        if (ny < 0 || ny >= h) continue;
+        const nrow = ny * w;
         let x = left;
         while (x <= right) {
-          while (x <= right && (seen[ny * W + x] || !empty(ny * W + x))) x++;
+          while (x <= right && (mask[nrow + x] || !open[nrow + x])) x++;
           if (x > right) break;
           const start = x;
-          while (x <= right && !seen[ny * W + x] && empty(ny * W + x)) x++;
-          stack.push([start, x - 1, ny]);
+          while (x <= right && !mask[nrow + x] && open[nrow + x]) x++;
+          stack.push(start, x - 1, ny);
         }
       }
     }
+    if (!filled) return false;
 
     // Paint the mask as a solid colour, then composite it normally so it
     // blends with whatever is already on the canvas.
-    const out = this._outCtx.createImageData(W, H);
-    const px = out.data;
-    const [r, g, b] = [1, 3, 5].map(i => parseInt(op.color.slice(i, i + 2), 16));
-    for (let i = 0; i < mask.length; i++) {
-      if (!mask[i]) continue;
-      px[i * 4] = r;
-      px[i * 4 + 1] = g;
-      px[i * 4 + 2] = b;
-      px[i * 4 + 3] = 255;
+    if (!this._outImg || this._outImg.width !== w || this._outImg.height !== h) {
+      this._outImg = this._outCtx.createImageData(w, h);
+      this._outPx = new Uint32Array(this._outImg.data.buffer);
     }
+    const px = this._outPx;
+    px.fill(0);
+    const packed = LITTLE_ENDIAN
+      ? (255 << 24 | b << 16 | g << 8 | r) >>> 0
+      : (r << 24 | g << 16 | b << 8 | 255) >>> 0;
+    for (let i = 0; i < mask.length; i++) if (mask[i]) px[i] = packed;
+
     this._outCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this._outCtx.putImageData(out, 0, 0);
+    this._outCtx.putImageData(this._outImg, 0, 0);
+
+    // Keep it for the replays. A WeakMap rather than a field on the op, so the
+    // bitmap is never walked by the autosave and goes away with the op itself.
+    if (!this._fillCache) this._fillCache = new WeakMap();
+    const keep = document.createElement('canvas');
+    keep.width = w;
+    keep.height = h;
+    keep.getContext('2d').drawImage(this._out, 0, 0);
+    this._fillCache.set(op, keep);
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(this._out, 0, 0);
+    // Nearest-neighbour: a blurred edge would bleed over the lines the fill
+    // just stopped at.
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this._out, 0, 0, w, h, 0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    return true;
   }
 
   /*
@@ -319,23 +423,51 @@ class DrawCanvas {
     ctx.drawImage(this._base, 0, 0, CW, CH);
     const art = ctx.getImageData(0, 0, CW, CH).data;
 
+    /*
+     * Allow a little slop: a child tracing near the line still counts. Grown
+     * the painted pixels outwards by R in a horizontal pass and then a vertical
+     * one — the same result as testing a square around every pixel, at a
+     * fraction of the reads, which matters because this runs after strokes.
+     */
+    const R = 2;
+    const N = CW * CH;
+    const rowGrown = new Uint8Array(N);
+    for (let y = 0; y < CH; y++) {
+      let run = 0;
+      for (let x = 0; x < CW; x++) {
+        const i = y * CW + x;
+        if (art[i * 4 + 3] > 30) run = R + 1;
+        if (run > 0) { rowGrown[i] = 1; run--; }
+      }
+      run = 0;
+      for (let x = CW - 1; x >= 0; x--) {
+        const i = y * CW + x;
+        if (art[i * 4 + 3] > 30) run = R + 1;
+        if (run > 0) { rowGrown[i] = 1; run--; }
+      }
+    }
+    const grown = new Uint8Array(N);
+    for (let x = 0; x < CW; x++) {
+      let run = 0;
+      for (let y = 0; y < CH; y++) {
+        const i = y * CW + x;
+        if (rowGrown[i]) run = R + 1;
+        if (run > 0) { grown[i] = 1; run--; }
+      }
+      run = 0;
+      for (let y = CH - 1; y >= 0; y--) {
+        const i = y * CW + x;
+        if (rowGrown[i]) run = R + 1;
+        if (run > 0) { grown[i] = 1; run--; }
+      }
+    }
+
     let total = 0;
     let hit = 0;
-    for (let y = 0; y < CH; y++) {
-      for (let x = 0; x < CW; x++) {
-        if (stencil[(y * CW + x) * 4 + 3] < 30) continue;
-        total++;
-        // Allow a little slop: a child tracing near the line still counts.
-        let near = false;
-        for (let dy = -2; dy <= 2 && !near; dy++) {
-          for (let dx = -2; dx <= 2; dx++) {
-            const nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= CW || ny >= CH) continue;
-            if (art[(ny * CW + nx) * 4 + 3] > 30) { near = true; break; }
-          }
-        }
-        if (near) hit++;
-      }
+    for (let i = 0; i < N; i++) {
+      if (stencil[i * 4 + 3] < 30) continue;
+      total++;
+      if (grown[i]) hit++;
     }
     return total ? hit / total : 0;
   }
@@ -375,18 +507,37 @@ class DrawCanvas {
   /* ─── HISTORY ─── */
 
   _commit(op) {
+    // A fill that changes no pixels is not history: recording it would give the
+    // undo button a press that visibly does nothing.
+    if (op.type === 'fill' && !this._paintFill(this._baseCtx, op)) return false;
+
     this.ops.push(op);
     this.redoStack.length = 0;
     if (op.type === 'clear') this._rebuildBase();
-    else this._paint(this._baseCtx, op);
+    else if (op.type !== 'fill') this._paint(this._baseCtx, op);
     this._composite();
     this._changed();
     this._maybeCelebrate();
+    return true;
   }
 
-  /* Fires once per stencil, when enough of the outline has been traced. */
+  /*
+   * Fires once per stencil, when enough of the outline has been traced.
+   * Measuring coverage means reading two canvases back, so it is throttled: a
+   * child scribbling fast commits strokes far quicker than the celebration
+   * needs checking, and the readbacks showed up as a hitch at every stroke end.
+   */
   _maybeCelebrate() {
     if (!this.stencilId || this._celebrated === this.stencilId) return;
+
+    const now = performance.now();
+    if (now - (this._lastCoverage || 0) < 250) {
+      clearTimeout(this._coverageTimer);
+      this._coverageTimer = setTimeout(() => this._maybeCelebrate(), 160);
+      return;
+    }
+    this._lastCoverage = now;
+
     if (this.coverage() < 0.55) return;
     this._celebrated = this.stencilId;
     this.confetti();
@@ -427,14 +578,27 @@ class DrawCanvas {
 
   /* ─── PERSISTENCE ─── */
 
+  /*
+   * Points go out as a flat [x, y, x, y, …] list rather than {x, y} objects:
+   * the same drawing at about half the characters. A busy page was pushing
+   * 200 KB per save, and once localStorage refuses the write the child's work
+   * quietly stops being kept.
+   */
   getDoc() {
     const r = n => Math.round(n * 10) / 10;
     return {
-      v: 1,
+      v: 2,
       ref: this.ref,
-      ops: this.ops.map(op => op.type === 'stroke'
-        ? { ...op, points: op.points.map(p => ({ x: r(p.x), y: r(p.y) })) }
-        : op),
+      ops: this.ops.map(op => {
+        if (op.type !== 'stroke') return op;
+        const { points, ...rest } = op;
+        const pts = new Array(points.length * 2);
+        for (let i = 0; i < points.length; i++) {
+          pts[i * 2] = r(points[i].x);
+          pts[i * 2 + 1] = r(points[i].y);
+        }
+        return { ...rest, pts };
+      }),
     };
   }
 
@@ -451,9 +615,28 @@ class DrawCanvas {
     return new Promise(res => out.toBlob(res, 'image/png'));
   }
 
+  /* Reads both the flat format above and the older {x, y} one, and drops any
+     op it cannot make sense of rather than throwing the drawing away. */
   loadDoc(doc) {
     if (!doc || !Array.isArray(doc.ops)) return false;
-    this.ops = doc.ops;
+
+    const ops = [];
+    for (const op of doc.ops) {
+      if (!op || typeof op !== 'object') continue;
+      if (op.type !== 'stroke') { ops.push(op); continue; }
+
+      const { pts, ...rest } = op;
+      let points = op.points;
+      if (Array.isArray(pts)) {
+        points = [];
+        for (let i = 0; i + 1 < pts.length; i += 2) points.push({ x: pts[i], y: pts[i + 1] });
+      }
+      if (!Array.isArray(points) || !points.length) continue;
+      if (!points.every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))) continue;
+      ops.push({ ...rest, points });
+    }
+
+    this.ops = ops;
     this.redoStack = [];
     if (doc.ref && doc.ref.w > 0 && doc.ref.h > 0) this.ref = doc.ref;
     this._rebuildBase();
@@ -465,6 +648,10 @@ class DrawCanvas {
 
   _addSparkles(x, y) {
     if (!this.sparkleOn) return;
+    // Decoration must never be the reason the line lags behind the finger:
+    // sustained scribbling produced a couple of hundred live particles, each
+    // an eight-point star redrawn every frame.
+    if (this._sparkles.length >= 90) return;
     for (let i = 0; i < 3; i++) {
       this._sparkles.push({
         x: x + (Math.random() - 0.5) * this.size * 2,
