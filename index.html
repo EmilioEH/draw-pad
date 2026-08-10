@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#fff8ef">
+  <meta name="theme-color" content="#e8ded1">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="description" content="Draw Pad — draw and trace dinosaurs">
@@ -14,61 +14,187 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div id="app">
-    <div id="canvasWrap">
-      <canvas id="stencilCanvas"></canvas>
-      <canvas id="drawCanvas"></canvas>
-      <canvas id="fxCanvas"></canvas>
+  <!--
+    One icon set, one line weight, one palette, all in currentColor so a button
+    can tint its icon with the colour she is drawing with. Emoji are still used
+    for the stickers themselves — those are artwork she stamps — but never for
+    the interface, where a dozen different illustrators' styles collide.
+  -->
+  <svg id="icons" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="ic-undo" viewBox="0 0 24 24">
+        <path d="M4 9h10a5.5 5.5 0 0 1 0 11h-3"/>
+        <path d="M8 4.5 3.5 9 8 13.5"/>
+      </symbol>
+      <symbol id="ic-bin" viewBox="0 0 24 24">
+        <path d="M4.5 6.5h15"/>
+        <path d="M9 6.5V4.8c0-.7.6-1.3 1.3-1.3h3.4c.7 0 1.3.6 1.3 1.3v1.7"/>
+        <path d="M6.5 6.5 7.6 19a1.6 1.6 0 0 0 1.6 1.5h5.6a1.6 1.6 0 0 0 1.6-1.5l1.1-12.5"/>
+        <path d="M10.5 10v6.5M13.5 10v6.5"/>
+      </symbol>
+      <symbol id="ic-save" viewBox="0 0 24 24">
+        <path d="M12 3.5v11"/>
+        <path d="m7.5 10 4.5 4.5 4.5-4.5"/>
+        <path d="M4.5 16v2.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V16"/>
+      </symbol>
+      <symbol id="ic-sound-on" viewBox="0 0 24 24">
+        <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/>
+        <path d="M15.5 9.2a4 4 0 0 1 0 5.6"/>
+        <path d="M18 6.5a7.5 7.5 0 0 1 0 11"/>
+      </symbol>
+      <symbol id="ic-sound-off" viewBox="0 0 24 24">
+        <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/>
+        <path d="m16 9.5 4.5 5M20.5 9.5l-4.5 5"/>
+      </symbol>
+      <symbol id="ic-bucket" viewBox="0 0 24 24">
+        <path d="M11.4 3.6 4.8 10.2a1.4 1.4 0 0 0 0 2l5.6 5.6a1.4 1.4 0 0 0 2 0l6.6-6.6z"/>
+        <path d="m8.6 6.4-2-2"/>
+        <path d="M20.5 14.5c1 1.4 1.5 2.4 1.5 3.1a1.5 1.5 0 0 1-3 0c0-.7.5-1.7 1.5-3.1z" class="solid"/>
+      </symbol>
+      <symbol id="ic-star" viewBox="0 0 24 24">
+        <path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9L3.5 9.7l5.9-.8z"/>
+      </symbol>
+      <!-- A long-neck rather than a T-Rex: at 24px a big body, a long neck and
+           a small head is the silhouette that still reads as a dinosaur. -->
+      <symbol id="ic-dino" viewBox="0 0 24 24">
+        <path d="M2 15c2.6-1.8 4.9-2.7 7-2.9 2.1-.2 3.5-.9 4.2-2.1.9-1.6 1.1-3.6 2.6-4.9 1.3-1.1 3.2-.9 4.2.4 1 1.3.6 3.1-.7 3.9-.6.4-1.3.5-1.9.4-.9.4-1.4 1.3-1.7 2.6-.3 1.3-.4 2.5-.4 3.5v4.1h-2v-3.4c-1 .3-2.1.4-3.2.4-1 0-1.9-.1-2.8-.3v3.3h-2v-4.2c-1.3-.7-2.4-1.6-3.3-2.8z"/>
+        <circle cx="18.7" cy="6.7" r=".75" class="solid"/>
+      </symbol>
+      <symbol id="ic-pen" viewBox="0 0 24 24">
+        <path d="M4 20c.4-2.6 1-4.3 1.8-5.1L16.2 4.5a2.2 2.2 0 0 1 3.1 3.1L8.9 18.1C8.1 18.9 6.5 19.6 4 20z"/>
+        <path d="m14.6 6.2 3.1 3.1"/>
+      </symbol>
+      <symbol id="ic-marker" viewBox="0 0 24 24">
+        <path d="M14.8 3.9 20 9.1l-8.6 8.6-5.2-5.2z"/>
+        <path d="M6.2 12.5 4 20l7.4-2.3"/>
+        <path d="M3.5 20.5h17"/>
+      </symbol>
+      <!-- Tilted to the same angle as the pen and the marker, so the brush row
+           reads as three implements held the same way. -->
+      <symbol id="ic-crayon" viewBox="0 0 24 24">
+        <g transform="rotate(-40 12 12)">
+          <path d="M12 3.2 15.6 8.6H8.4z"/>
+          <path d="M8.4 8.6h7.2v11a1.2 1.2 0 0 1-1.2 1.2H9.6a1.2 1.2 0 0 1-1.2-1.2z"/>
+          <path d="M8.4 11.7h7.2M8.4 14.7h7.2"/>
+        </g>
+      </symbol>
+      <symbol id="ic-magic" viewBox="0 0 24 24">
+        <path d="m13.5 3 1.4 3.6L18.5 8l-3.6 1.4L13.5 13l-1.4-3.6L8.5 8l3.6-1.4z"/>
+        <path d="m6.5 13 .9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z"/>
+        <path d="m18 14.5.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>
+      </symbol>
+      <symbol id="ic-none" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.5"/>
+        <path d="m6 18 12-12"/>
+      </symbol>
+      <symbol id="ic-close" viewBox="0 0 24 24">
+        <path d="m6 10 6 6 6-6"/>
+      </symbol>
+    </defs>
+  </svg>
 
-      <!-- Kept off the toolbar and away from the drawing controls, so the
-           destructive ones are hard to hit by accident. -->
+  <div id="app">
+    <div id="paper">
+      <div id="canvasWrap">
+        <canvas id="stencilCanvas"></canvas>
+        <canvas id="drawCanvas"></canvas>
+        <canvas id="fxCanvas"></canvas>
+      </div>
+
+      <!--
+        Undo is a child action, used constantly, so it stays large. Clear, save
+        and mute are grown-up actions: same target size, far less shouting, and
+        grouped apart so they read as a different kind of thing.
+      -->
       <div id="floatTools">
-        <button id="undoBtn" class="float-btn" aria-label="Undo">↩</button>
-        <button id="clearBtn" class="float-btn hold-btn" aria-label="Clear — press and hold">🗑</button>
-        <button id="saveBtn" class="float-btn hold-btn" aria-label="Save picture — press and hold">💾</button>
-        <button id="muteBtn" class="float-btn" aria-label="Sound on or off">🔊</button>
+        <button id="undoBtn" class="float-btn primary" aria-label="Undo">
+          <svg class="ic"><use href="#ic-undo"/></svg>
+        </button>
+        <div id="parentTools">
+          <button id="clearBtn" class="float-btn hold-btn" aria-label="Clear — press and hold">
+            <svg class="ic"><use href="#ic-bin"/></svg>
+          </button>
+          <button id="saveBtn" class="float-btn hold-btn" aria-label="Save picture — press and hold">
+            <svg class="ic"><use href="#ic-save"/></svg>
+          </button>
+          <button id="muteBtn" class="float-btn" aria-label="Sound on or off">
+            <svg class="ic"><use href="#ic-sound-on"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
     <div id="toolbar">
       <div id="colors">
-        <button class="c-btn" data-color="#ff3b30" style="background:#ff3b30" aria-label="Red"></button>
-        <button class="c-btn" data-color="#ff9500" style="background:#ff9500" aria-label="Orange"></button>
-        <button class="c-btn" data-color="#ffcc00" style="background:#ffcc00" aria-label="Yellow"></button>
-        <button class="c-btn" data-color="#34c759" style="background:#34c759" aria-label="Green"></button>
-        <button class="c-btn" data-color="#007aff" style="background:#007aff" aria-label="Blue"></button>
-        <button class="c-btn" data-color="#af52de" style="background:#af52de" aria-label="Purple"></button>
-        <button class="c-btn" data-color="#ff2d92" style="background:#ff2d92" aria-label="Pink"></button>
-        <button class="c-btn" data-color="#1c1c1e" style="background:#1c1c1e" aria-label="Black"></button>
+        <button class="c-btn" data-color="#ff3b30" style="--sw:#ff3b30" aria-label="Red"></button>
+        <button class="c-btn" data-color="#ff9500" style="--sw:#ff9500" aria-label="Orange"></button>
+        <button class="c-btn" data-color="#ffcc00" style="--sw:#ffcc00" aria-label="Yellow"></button>
+        <button class="c-btn" data-color="#34c759" style="--sw:#34c759" aria-label="Green"></button>
+        <button class="c-btn" data-color="#007aff" style="--sw:#007aff" aria-label="Blue"></button>
+        <button class="c-btn" data-color="#af52de" style="--sw:#af52de" aria-label="Purple"></button>
+        <button class="c-btn" data-color="#ff2d92" style="--sw:#ff2d92" aria-label="Pink"></button>
+        <button class="c-btn" data-color="#1c1c1e" style="--sw:#1c1c1e" aria-label="Black"></button>
         <button class="c-btn rainbow-btn" data-color="rainbow" aria-label="Rainbow"></button>
       </div>
 
       <div id="tools">
-        <button class="size-btn" data-size="8" aria-label="Thin"><span class="dot" style="--d:9px"></span></button>
-        <button class="size-btn active" data-size="18" aria-label="Medium"><span class="dot" style="--d:17px"></span></button>
-        <button class="size-btn" data-size="34" aria-label="Thick"><span class="dot" style="--d:26px"></span></button>
-        <button class="tool-btn" data-mode="fill" aria-label="Fill">🪣</button>
-        <button class="tool-btn" data-toggle="magic" aria-label="Magic sparkles">✨</button>
-        <button class="tool-btn" id="stampsBtn" aria-label="Stickers">⭐</button>
-        <button class="tool-btn" id="dinosBtn" aria-label="Dinosaurs">🦖</button>
+        <!-- The three sizes are one choice, so they sit in one recessed group
+             rather than looking like three more tools. The dots carry the
+             current colour, so the toolbar shows what is loaded. -->
+        <div class="seg">
+          <button class="size-btn" data-size="8" aria-label="Thin"><span class="dot" style="--d:9px"></span></button>
+          <button class="size-btn active" data-size="18" aria-label="Medium"><span class="dot" style="--d:17px"></span></button>
+          <button class="size-btn" data-size="34" aria-label="Thick"><span class="dot" style="--d:26px"></span></button>
+        </div>
+        <button class="tool-btn tinted" id="brushBtn" aria-label="Brushes">
+          <svg class="ic"><use href="#ic-pen"/></svg>
+        </button>
+        <button class="tool-btn tinted" data-mode="fill" aria-label="Fill">
+          <svg class="ic"><use href="#ic-bucket"/></svg>
+        </button>
+        <button class="tool-btn" id="stampsBtn" aria-label="Stickers">
+          <svg class="ic"><use href="#ic-star"/></svg>
+        </button>
+        <button class="tool-btn" id="dinosBtn" aria-label="Dinosaurs">
+          <svg class="ic"><use href="#ic-dino"/></svg>
+        </button>
       </div>
     </div>
 
-    <!-- Full-screen pickers: choosing what to draw is its own moment, and it
-         gets the whole screen instead of a cramped strip. -->
+    <!--
+      Sheets rather than full-screen takeovers: her drawing stays visible
+      behind them, they arrive with some weight instead of appearing, and
+      tapping the paper puts them away.
+    -->
+    <div id="scrim" class="hidden"></div>
+
+    <div id="brushPicker" class="picker hidden">
+      <div class="grabber"></div>
+      <div class="picker-grid cols-4" id="brushGrid"></div>
+      <button class="picker-close" aria-label="Back">
+        <svg class="ic"><use href="#ic-close"/></svg>
+      </button>
+    </div>
+
     <div id="stencilPicker" class="picker hidden">
+      <div class="grabber"></div>
       <div class="picker-grid" id="stencilGrid"></div>
-      <button class="picker-close" aria-label="Back">✓</button>
+      <button class="picker-close" aria-label="Back">
+        <svg class="ic"><use href="#ic-close"/></svg>
+      </button>
     </div>
 
     <div id="stampPicker" class="picker hidden">
-      <div class="picker-grid" id="stampGrid"></div>
+      <div class="grabber"></div>
+      <div class="picker-grid cols-4" id="stampGrid"></div>
       <div class="picker-sizes">
         <button class="stamp-size-btn" data-stampsize="40" aria-label="Small sticker"><span class="dot" style="--d:14px"></span></button>
         <button class="stamp-size-btn active" data-stampsize="72" aria-label="Medium sticker"><span class="dot" style="--d:22px"></span></button>
         <button class="stamp-size-btn" data-stampsize="120" aria-label="Big sticker"><span class="dot" style="--d:32px"></span></button>
       </div>
-      <button class="picker-close" aria-label="Back">✓</button>
+      <button class="picker-close" aria-label="Back">
+        <svg class="ic"><use href="#ic-close"/></svg>
+      </button>
     </div>
   </div>
 

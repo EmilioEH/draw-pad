@@ -5,23 +5,63 @@
  * does; mis-hitting a colour just gives you a different colour.
  */
 :root {
-  --btn: clamp(48px, 12.2vw, 64px);
-  --swatch: clamp(36px, 9.4vw, 48px);
+  /* Slightly tighter than before: the tray is now an inset island, and the
+     margins either side come out of the width the seven tools have to fit in. */
+  --btn: clamp(48px, 11.4vw, 64px);
+  --swatch: clamp(36px, 9vw, 48px);
+
+  /* One spacing and radius scale. Ad-hoc values in the old sheet ran 5, 6, 7,
+     12, 14px with radii of 50%, 18px and 22px; picking a scale and sticking to
+     it is most of what separates "designed" from "assembled". */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px; --s5: 24px;
+  --r1: 12px; --r2: 18px; --r3: 26px; --r4: 34px;
+
+  /* The paper is warm and light; the tools are a dark warm ink. Bright colours
+     on a dark tray read as a tool surface rather than as toy buttons, and the
+     palette stops sinking into the beige it used to sit on. */
   --paper: #fff8ef;
-  --tray: #f2e7d5;
-  --chip: #e6d8c3;
-  --sel: #ff3b30;
+  --desk: #e8ded1;
+  --tray: #221d1a;
+  --tray-hi: #333;
+  --chip: #3a322e;
+  --chip-on: #fffdfa;
+  --ink: #f6efe6;
+  --ink-dim: #9c918a;
+  --sel: #ff6a3d;
+  --go: #34c759;
+
+  /* Motion with a little overshoot. Everything used to be a flat .1s. */
+  --spring: cubic-bezier(.34, 1.42, .64, 1);
+  --ease: cubic-bezier(.32, .72, 0, 1);
 }
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none}
 body{font-family:-apple-system,system-ui,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  background:var(--tray);display:flex;justify-content:center;align-items:center}
+  background:var(--desk);display:flex;justify-content:center;align-items:center}
 
-#app{width:100%;max-width:700px;height:100dvh;display:flex;flex-direction:column;position:relative;background:var(--paper)}
+#icons{display:none}
+.ic{width:52%;height:52%;fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.ic .solid{fill:currentColor;stroke:none}
 
-/* ─── CANVAS ─── */
-#canvasWrap{flex:1;position:relative;overflow:hidden;min-height:0}
+#app{width:100%;max-width:700px;height:100dvh;display:flex;flex-direction:column;
+  position:relative;background:var(--desk);overflow:hidden}
+
+/* ─── PAPER ─── */
+/* The sheet is an object on a desk, not a background colour: inset, rounded,
+   with a shadow and a grain, so there is something there before she draws. */
+#paper{flex:1;position:relative;min-height:0;margin:var(--s2) var(--s2) 0;
+  border-radius:var(--r3) var(--r3) var(--r2) var(--r2);background:var(--paper);
+  box-shadow:0 1px 2px rgba(60,40,25,.14), 0 6px 18px rgba(60,40,25,.13);
+  overflow:hidden}
+#paper::after{content:'';position:absolute;inset:0;z-index:4;pointer-events:none;
+  border-radius:inherit;opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3CfeColorMatrix values='0 0 0 0 .38 0 0 0 0 .29 0 0 0 0 .18 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* A whisper of shading at the edges, so the sheet has a surface. */
+  box-shadow:inset 0 0 40px rgba(120,90,60,.05)}
+
+#canvasWrap{position:absolute;inset:0;overflow:hidden}
 #stencilCanvas,#drawCanvas,#fxCanvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none}
 #stencilCanvas{z-index:1;pointer-events:none}
 #drawCanvas{z-index:2}
@@ -29,73 +69,157 @@ body{font-family:-apple-system,system-ui,BlinkMacSystemFont,'Segoe UI',Roboto,sa
 #fxCanvas{z-index:3;pointer-events:none}
 
 /* ─── FLOATING ACTIONS ─── */
-#floatTools{position:absolute;top:10px;right:10px;z-index:4;display:flex;flex-direction:column;gap:8px;align-items:center}
+#floatTools{position:absolute;top:var(--s3);right:var(--s3);z-index:5;
+  display:flex;flex-direction:column;gap:var(--s3);align-items:center}
+/* The grown-up cluster: same targets, tighter together, much quieter. */
+#parentTools{display:flex;flex-direction:column;gap:2px;padding:2px;border-radius:var(--r4);
+  background:rgba(34,29,26,.05)}
+
 .float-btn{width:var(--btn);height:var(--btn);border-radius:50%;border:none;
-  background:rgba(255,255,255,.82);backdrop-filter:blur(4px);
-  box-shadow:0 2px 6px rgba(0,0,0,.16);font-size:calc(var(--btn)*.42);
+  background:transparent;color:#6f6259;
   cursor:pointer;display:flex;align-items:center;justify-content:center;
-  position:relative;overflow:hidden;isolation:isolate;transition:transform .1s}
-.float-btn:active{transform:scale(.92)}
-#muteBtn{opacity:.55;font-size:calc(var(--btn)*.34)}
+  position:relative;overflow:hidden;isolation:isolate;
+  transition:transform .18s var(--spring), background .18s var(--ease), color .18s var(--ease)}
+.float-btn .ic{width:44%;height:44%;stroke-width:1.6}
+.float-btn:active{transform:scale(.9)}
+
+/* Undo is the one she uses; it gets to look like a real button. */
+.float-btn.primary{background:rgba(255,253,250,.9);color:#3c332e;
+  box-shadow:0 1px 2px rgba(60,40,25,.14), 0 4px 12px rgba(60,40,25,.14)}
+.float-btn.primary .ic{width:50%;height:50%;stroke-width:1.9}
+#muteBtn{color:#a2958b}
 
 /* Press-and-hold fill: no reading required, and hard to trigger by accident. */
 .hold-btn{--hold:0%}
-.hold-btn::before{content:'';position:absolute;inset:0;z-index:-1;background:var(--sel);opacity:.9;
-  clip-path:inset(calc(100% - var(--hold)) 0 0 0);pointer-events:none}
-#saveBtn.hold-btn::before{background:#34c759}
-.hold-btn.done{background:#34c759;color:#fff}
+.hold-btn::before{content:'';position:absolute;inset:0;z-index:-1;background:var(--sel);opacity:.92;
+  clip-path:inset(calc(100% - var(--hold)) 0 0 0);pointer-events:none;
+  transition:clip-path .06s linear}
+#saveBtn.hold-btn::before{background:var(--go)}
+.hold-btn.done{background:var(--go);color:#fff}
 
 /* ─── TOOLBAR ─── */
-#toolbar{flex-shrink:0;background:var(--tray);padding:7px 6px calc(7px + env(safe-area-inset-bottom));
-  display:flex;flex-direction:column;gap:7px}
+/* A floating island over the desk rather than a bar welded to the bottom. */
+#toolbar{flex-shrink:0;margin:var(--s2);margin-bottom:calc(var(--s2) + env(safe-area-inset-bottom));
+  padding:var(--s2);
+  background:var(--tray);border-radius:var(--r3);
+  box-shadow:0 2px 6px rgba(40,26,16,.2), 0 10px 26px rgba(40,26,16,.22);
+  display:flex;flex-direction:column;gap:var(--s2)}
 
-#colors{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}
-.c-btn{width:var(--swatch);height:var(--swatch);border-radius:50%;border:3px solid transparent;
-  cursor:pointer;transition:transform .1s;box-shadow:0 1px 3px rgba(0,0,0,.18)}
-.c-btn:active{transform:scale(.88)}
-.c-btn.on{border-color:#fff;box-shadow:0 0 0 3px #3a3a3a,0 1px 3px rgba(0,0,0,.2);transform:scale(1.06)}
+#colors{display:flex;gap:var(--s1);justify-content:center;flex-wrap:wrap}
+.c-btn{width:var(--swatch);height:var(--swatch);border-radius:50%;border:none;background:var(--sw);
+  cursor:pointer;position:relative;
+  transition:transform .22s var(--spring), box-shadow .22s var(--ease)}
+.c-btn:active{transform:scale(.86)}
 .rainbow-btn{background:conic-gradient(#ff3b30,#ff9500,#ffcc00,#34c759,#007aff,#af52de,#ff2d92,#ff3b30)}
 
-#tools{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
-.size-btn,.tool-btn{width:var(--btn);height:var(--btn);border-radius:18px;border:3px solid transparent;
-  background:var(--chip);cursor:pointer;transition:transform .1s;
-  display:flex;align-items:center;justify-content:center}
-.tool-btn{font-size:calc(var(--btn)*.46)}
-.size-btn:active,.tool-btn:active{transform:scale(.9)}
-.size-btn.active,.tool-btn.active{border-color:var(--sel);background:#fff}
-/* Brush thickness is shown as a dot of that thickness — nothing to read. */
-.dot{width:var(--d);height:var(--d);border-radius:50%;background:#4a4a4a;display:block}
+/*
+ * One selected state for all three groups. The old sheet had swatches with a
+ * hard dark ring and tools with a red border and a white fill — two visual
+ * languages for one idea. Everything now lifts: it grows, gains a light ring
+ * and casts a shadow.
+ */
+.c-btn.on{transform:scale(1.12);
+  box-shadow:0 0 0 3px var(--tray), 0 0 0 5.5px var(--ink), 0 4px 10px rgba(0,0,0,.35)}
 
-/* ─── PICKERS ─── */
-.picker{position:absolute;inset:0;z-index:10;background:var(--paper);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px}
-.picker.hidden{display:none}
-.picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%;max-width:520px}
-.picker-cell{aspect-ratio:1;border-radius:22px;border:4px solid transparent;background:var(--chip);
+#tools{display:flex;gap:var(--s2);justify-content:center;flex-wrap:wrap;align-items:center}
+
+/* The size group: one recessed well holding three related choices, so the row
+   reads as "a thickness, then some tools" instead of seven equal chips. */
+.seg{display:flex;gap:2px;padding:3px;border-radius:calc(var(--r2) + 3px);background:rgba(0,0,0,.28)}
+.seg .size-btn{border-radius:calc(var(--r2) - 2px);background:transparent}
+.seg .size-btn.active{background:var(--chip-on);box-shadow:none}
+
+.size-btn,.tool-btn{width:var(--btn);height:var(--btn);border-radius:var(--r2);border:none;
+  background:var(--chip);color:var(--ink);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .22s var(--spring), background .2s var(--ease), color .2s var(--ease),
+    box-shadow .2s var(--ease)}
+.size-btn:active,.tool-btn:active{transform:scale(.88)}
+.size-btn.active,.tool-btn.active{background:var(--chip-on);color:#2b2320;
+  box-shadow:0 0 0 2.5px var(--sel), 0 3px 10px rgba(0,0,0,.3)}
+
+/* Brush thickness is shown as a dot of that thickness — nothing to read — and
+   in the colour that is loaded, so the toolbar reflects the drawing. */
+.dot{width:var(--d);height:var(--d);border-radius:50%;display:block;
+  background:var(--now,#efe7dd);transition:background .2s var(--ease)}
+.dot.rainbow{background:conic-gradient(#ff3b30,#ffcc00,#34c759,#007aff,#af52de,#ff3b30)}
+.stamp-size-btn .dot{background:#8a7f78}
+.stamp-size-btn.active .dot{background:#3a322e}
+/* The bucket and the brush hold the current colour too. */
+.tool-btn.tinted{color:var(--now,var(--ink))}
+.tool-btn.tinted.active{color:var(--now,#2b2320)}
+.tool-btn.tinted.on-rainbow{color:#ff7a3d}
+
+/* ─── SHEETS ─── */
+#scrim{position:absolute;inset:0;z-index:9;background:rgba(28,20,14,.28);
+  backdrop-filter:blur(2px);opacity:1;transition:opacity .26s var(--ease)}
+#scrim.hidden{opacity:0;pointer-events:none}
+
+.picker{position:absolute;left:0;right:0;bottom:0;z-index:10;
+  background:var(--tray);color:var(--ink);
+  border-radius:var(--r4) var(--r4) 0 0;
+  box-shadow:0 -8px 30px rgba(30,18,10,.3);
+  padding:var(--s2) var(--s4) calc(var(--s4) + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;align-items:center;gap:var(--s4);
+  transform:translateY(0);opacity:1;
+  transition:transform .34s var(--spring), opacity .2s var(--ease), visibility .34s}
+.picker.hidden{transform:translateY(104%);opacity:0;visibility:hidden;pointer-events:none}
+.grabber{width:44px;height:5px;border-radius:3px;background:#5b504a;flex-shrink:0;margin-bottom:var(--s1)}
+
+.picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3);width:100%;max-width:520px}
+.picker-grid.cols-4{grid-template-columns:repeat(4,1fr)}
+.picker-cell{aspect-ratio:1;border-radius:var(--r2);border:none;background:var(--chip);color:var(--ink);
   cursor:pointer;display:flex;align-items:center;justify-content:center;
-  font-size:min(15vw,64px);overflow:hidden;transition:transform .1s}
-.picker-cell:active{transform:scale(.94)}
-.picker-cell.on{border-color:var(--sel);background:#fff}
+  font-size:min(11vw,52px);overflow:hidden;position:relative;
+  transition:transform .22s var(--spring), background .2s var(--ease), box-shadow .2s var(--ease)}
+.picker-cell:active{transform:scale(.92)}
+.picker-cell.on{background:var(--chip-on);color:#2b2320;
+  box-shadow:0 0 0 2.5px var(--sel), 0 4px 12px rgba(0,0,0,.34)}
 .picker-cell canvas{width:100%;height:100%}
-.picker-sizes{display:flex;gap:12px}
-.stamp-size-btn{width:var(--btn);height:var(--btn);border-radius:18px;border:3px solid transparent;
-  background:var(--chip);cursor:pointer;display:flex;align-items:center;justify-content:center}
-.stamp-size-btn.active{border-color:var(--sel);background:#fff}
-.picker-close{width:calc(var(--btn)*1.15);height:calc(var(--btn)*1.15);border-radius:50%;border:none;
-  background:#34c759;color:#fff;font-size:calc(var(--btn)*.5);cursor:pointer;
-  box-shadow:0 3px 8px rgba(0,0,0,.2)}
-.picker-close:active{transform:scale(.92)}
+.picker-cell .ic{width:58%;height:58%;stroke-width:1.6}
+/* The dinosaur outlines are drawn dark; on the dark tray they need lifting. */
+.stencil-cell canvas{filter:invert(1) brightness(1.35)}
+.stencil-cell.on canvas{filter:none}
+
+.picker-sizes{display:flex;gap:var(--s3)}
+.stamp-size-btn{width:var(--btn);height:var(--btn);border-radius:var(--r2);border:none;
+  background:var(--chip);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:transform .22s var(--spring), background .2s var(--ease), box-shadow .2s var(--ease)}
+.stamp-size-btn:active{transform:scale(.88)}
+.stamp-size-btn.active{background:var(--chip-on);box-shadow:0 0 0 2.5px var(--sel)}
+
+/* A quiet chevron down, not a green tick the size of a plum. */
+.picker-close{width:var(--btn);height:var(--btn);border-radius:50%;border:none;
+  background:var(--chip);color:var(--ink);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .22s var(--spring), background .2s var(--ease)}
+.picker-close .ic{width:56%;height:56%;stroke-width:2}
+.picker-close:active{transform:scale(.9)}
 
 /*
- * On a 360px phone, seven tool buttons at 48px simply cannot fit on one line
- * (7x48 + gaps > the available width). Wrapping would cost far more canvas
- * than the few pixels of target size given up here, so shrink instead.
+ * On a phone, seven tool buttons at 48px simply cannot fit on one line
+ * (7x48 + gaps > the available width), and the inset island costs another
+ * 32px on top. Wrapping would eat far more canvas than the few pixels of
+ * target size given up here, so below tablet width the tray runs full bleed
+ * and the buttons shrink to the 44px floor instead.
  */
-@media (max-width:384px){
+@media (max-width:430px){
   :root{--btn:44px;--swatch:34px}
-  #colors,#tools{gap:4px}
+  #colors,#tools{gap:var(--s1)}
+  /* The island goes full width here, which buys back the margins the seven
+     tools need. Below this width they simply do not fit otherwise. */
+  #toolbar{margin-left:0;margin-right:0;
+    border-radius:var(--r3) var(--r3) 0 0;margin-bottom:0;
+    padding-bottom:calc(var(--s3) + env(safe-area-inset-bottom))}
+  #paper{margin-left:0;margin-right:0;border-radius:var(--r2)}
+}
+
+/* Short screens: the sheet grid would otherwise push its own close button off. */
+@media (max-height:620px){
+  .picker-grid{gap:var(--s2)}
+  .picker{gap:var(--s2);padding-top:var(--s1)}
 }
 
 @media (prefers-reduced-motion:reduce){
-  *{transition:none!important}
+  *{transition:none!important;animation:none!important}
 }

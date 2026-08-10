@@ -4,6 +4,35 @@ const DEFAULT_COLOR = '#ff3b30';
 /* Byte order of a Uint32 view over ImageData, used by the flood fill. */
 const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x11223344]).buffer)[0] === 0x44;
 
+/*
+ * The materials. A stroke is a ribbon of varying width, and these are the
+ * knobs that make one feel unlike another:
+ *
+ *   alpha  how much the ink builds up where strokes cross
+ *   taper  how much speed thins the line — 0 is a constant-width pen
+ *   ease   width inertia, so the line does not flicker between thick and thin
+ *   grain  speckle scattered along the edges, which is what reads as wax
+ *
+ * The magic brush is a brush rather than a separate toggle, so what she is
+ * holding is always one choice rather than a choice plus two switches.
+ */
+const BRUSHES = {
+  pen:    { alpha: 1,    taper: 0.55, ease: 0.65, grain: 0,   glow: false, sparkle: false },
+  marker: { alpha: 0.45, taper: 0.12, ease: 0.8,  grain: 0,   glow: false, sparkle: false },
+  crayon: { alpha: 0.92, taper: 0.35, ease: 0.55, grain: 1.6, glow: false, sparkle: false },
+  magic:  { alpha: 1,    taper: 0.5,  ease: 0.65, grain: 0,   glow: true,  sparkle: true },
+};
+const DEFAULT_BRUSH = 'pen';
+
+/* Deterministic noise. Crayon grain has to land in the same places every time
+   the picture is redrawn, or an undo would reshuffle it. */
+function hash01(n) {
+  let t = (n + 0x6d2b79f5) | 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
 function hslToHex(h, s, l) {
   const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
   const f = n => {
@@ -35,6 +64,7 @@ class DrawCanvas {
     this.size = 10;
     this.stencilId = null;
     this.mode = 'draw';
+    this.brush = DEFAULT_BRUSH;
     this.stampEmoji = null;
     this.stampSize = 48;
     this.sparkleOn = false;
@@ -83,14 +113,21 @@ class DrawCanvas {
     }
 
     if (!this.ctx) {
-      this.ctx = this.canvas.getContext('2d');
+      // desynchronized lets the browser skip a compositing step for the layer
+      // being drawn on, which measurably shortens the gap between the finger
+      // and the ink. It is a hint; browsers that ignore it lose nothing.
+      this.ctx = this.canvas.getContext('2d', { desynchronized: true });
       this.sCtx = this.stencilEl.getContext('2d');
-      this.fxCtx = this.fxEl.getContext('2d');
+      this.fxCtx = this.fxEl.getContext('2d', { desynchronized: true });
       this._base = document.createElement('canvas');
       this._baseCtx = this._base.getContext('2d');
+      this._liveLayer = document.createElement('canvas');
+      this._liveCtx = this._liveLayer.getContext('2d');
     }
     this._base.width = this.canvas.width;
     this._base.height = this.canvas.height;
+    this._liveLayer.width = this.canvas.width;
+    this._liveLayer.height = this.canvas.height;
     this._fillCache = new WeakMap();   // worked out for the old size
 
     // An empty document adopts the current size, so fresh drawings are 1:1.
@@ -98,6 +135,7 @@ class DrawCanvas {
 
     this.drawStencil();
     this._rebuildBase();
+    this._refreshLiveLayer();
     this._composite();
   }
 
@@ -138,6 +176,14 @@ class DrawCanvas {
     if (!on) this._sparkles = [];
   }
 
+  setBrush(name) {
+    if (!BRUSHES[name]) return;
+    this.brush = name;
+    const b = BRUSHES[name];
+    this.setGlow(b.glow);
+    this.setSparkle(b.sparkle);
+  }
+
   setStencil(id) {
     this.stencilId = id;
     this._celebrated = null;   // a new outline is a new thing to finish
@@ -172,60 +218,127 @@ class DrawCanvas {
       return;
     }
 
-    const pts = op.points;
-    if (!pts.length) { ctx.restore(); return; }
+    this._paintStroke(ctx, op);
+    ctx.restore();
+  }
 
-    ctx.lineWidth = op.size;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = op.color;
+  /*
+   * A stroke is a ribbon, not a constant-width line. Drawing it as one filled
+   * compound path — a quad per segment plus a disc at each joint — rather than
+   * as N separate fills matters for the translucent brushes: overlapping fills
+   * would darken every joint, while one fill of the whole shape does not.
+   *
+   * The ends taper here rather than being baked into the recorded widths, so
+   * the tail keeps following the finger as the stroke grows and a finished
+   * stroke looks exactly like the one that was under the finger.
+   */
+  _paintStroke(ctx, op) {
+    const pts = op.points;
+    if (!pts.length) return;
+
+    const b = BRUSHES[op.brush] || BRUSHES.pen;
+    const n = pts.length;
+
     ctx.fillStyle = op.color;
+    ctx.globalAlpha = b.alpha;
     if (op.glow) {
       // Glow the stroke's own colour, so it reads against a light background.
       ctx.shadowColor = op.rainbow ? '#ff00cc' : op.color;
       ctx.shadowBlur = Math.max(8, op.size * 1.5);
     }
 
-    if (pts.length === 1) {
+    if (n === 1) {
       // A single tap should still leave a dot.
       if (op.rainbow) ctx.fillStyle = `hsl(${op.hue || 0} 90% 55%)`;
       ctx.beginPath();
-      ctx.arc(pts[0].x, pts[0].y, op.size / 2, 0, Math.PI * 2);
+      ctx.arc(pts[0].x, pts[0].y, Math.max(1, this._widthAt(op, 0) / 2), 0, Math.PI * 2);
       ctx.fill();
-      ctx.restore();
+      this._paintGrain(ctx, op, b, 0);
+      ctx.globalAlpha = 1;
       return;
     }
 
     if (op.rainbow) {
-      // Segment-by-segment so the hue can travel along the stroke.
-      for (let i = 0; i < pts.length - 1; i++) {
-        ctx.strokeStyle = `hsl(${((op.hue || 0) + i * 9) % 360} 90% 55%)`;
-        ctx.beginPath();
-        ctx.moveTo(pts[i].x, pts[i].y);
-        ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
-        ctx.stroke();
+      // Segment by segment, so the hue can travel along the stroke. Rainbow is
+      // always opaque, so the overlap at the joints costs nothing.
+      for (let i = 0; i < n - 1; i++) {
+        ctx.fillStyle = `hsl(${((op.hue || 0) + i * 9) % 360} 90% 55%)`;
+        ctx.fill(this._ribbon(op, i, i + 1, i === 0));
       }
-      ctx.restore();
-      return;
+    } else {
+      ctx.fill(this._ribbon(op, 0, n - 1, true));
     }
 
-    // Smoothing is always on: it compensates for unsteady hands, which is the
-    // normal case for this app's audience.
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    if (pts.length === 2) {
-      ctx.lineTo(pts[1].x, pts[1].y);
-    } else {
-      for (let i = 1; i < pts.length - 1; i++) {
-        const mx = (pts[i].x + pts[i + 1].x) / 2;
-        const my = (pts[i].y + pts[i + 1].y) / 2;
-        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
-      }
-      const last = pts[pts.length - 1];
-      ctx.lineTo(last.x, last.y);
+    this._paintGrain(ctx, op, b, 0);
+    ctx.globalAlpha = 1;
+  }
+
+  /*
+   * The width at one point. Only the start of the stroke tapers here — the
+   * lift-off taper is written into the recorded widths when the finger comes
+   * up, because a taper that depends on where the stroke currently ends would
+   * change shape behind the finger and could not be drawn incrementally.
+   */
+  _widthAt(op, i) {
+    const w = op.points[i].w || op.size;
+    const k = op.points.length < 3 ? 1 : 0.4 + 0.6 * Math.min(1, i / 6);
+    return Math.max(0.6, w * k);
+  }
+
+  /* The ribbon for segments [from, to] — a quad per segment plus a disc at
+     each joint, all in one path so a translucent fill does not stack up. */
+  _ribbon(op, from, to, withStartCap) {
+    const pts = op.points;
+    const path = new Path2D();
+    if (withStartCap) {
+      const r = this._widthAt(op, from) / 2;
+      path.moveTo(pts[from].x + r, pts[from].y);
+      path.arc(pts[from].x, pts[from].y, r, 0, Math.PI * 2, true);
     }
-    ctx.stroke();
-    ctx.restore();
+    for (let i = from; i < to; i++) {
+      const p = pts[i], q = pts[i + 1];
+      const dx = q.x - p.x, dy = q.y - p.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len;
+      const r1 = this._widthAt(op, i) / 2, r2 = this._widthAt(op, i + 1) / 2;
+      path.moveTo(p.x + nx * r1, p.y + ny * r1);
+      path.lineTo(q.x + nx * r2, q.y + ny * r2);
+      path.lineTo(q.x - nx * r2, q.y - ny * r2);
+      path.lineTo(p.x - nx * r1, p.y - ny * r1);
+      path.closePath();
+      // Wound the same way round as the quad above. The two shapes overlap, and
+      // under nonzero winding an opposite winding subtracts — which punched a
+      // row of holes along every line.
+      path.moveTo(q.x + r2, q.y);
+      path.arc(q.x, q.y, r2, 0, Math.PI * 2, true);
+    }
+    return path;
+  }
+
+  /* Wax speckle along the stroke. Seeded from the op so it never reshuffles. */
+  _paintGrain(ctx, op, b, from) {
+    if (!b.grain) return;
+    const pts = op.points;
+    const seed = op.seed || 1;
+    ctx.globalAlpha = b.alpha * 0.35;
+    const path = new Path2D();
+    for (let i = from; i < pts.length; i++) {
+      const w = pts[i].w || op.size;
+      const flecks = Math.max(1, Math.round(b.grain * Math.sqrt(w) * 0.8));
+      for (let k = 0; k < flecks; k++) {
+        const h = seed * 7919 + i * 31 + k * 7;
+        const a = hash01(h) * Math.PI * 2;
+        // Hugging the edge of the ribbon, not thrown clear of it: past w/2 the
+        // flecks stop reading as texture and start looking like sprinkles.
+        const rad = (0.18 + hash01(h + 401) * 0.34) * w;
+        const dot = 0.4 + hash01(h + 977) * (w * 0.075);
+        const x = pts[i].x + Math.cos(a) * rad;
+        const y = pts[i].y + Math.sin(a) * rad;
+        path.moveTo(x + dot, y);
+        path.arc(x, y, dot, 0, Math.PI * 2);
+      }
+    }
+    ctx.fill(path);
   }
 
   /* ─── FLOOD FILL ─── */
@@ -487,13 +600,73 @@ class DrawCanvas {
     }
   }
 
-  /* Base + any strokes currently under a finger. */
+  /*
+   * Base + whatever is under a finger.
+   *
+   * The stroke being drawn lives on its own layer, and only the newly arrived
+   * segments are added to it — repainting the whole stroke every frame cost
+   * 40ms once a scribble passed a thousand points, which is exactly the lag
+   * this brush work was supposed to remove. The layer is painted opaque and
+   * composited at the brush's alpha, so a translucent marker builds up where
+   * it crosses another stroke but not along its own length.
+   */
   _composite() {
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.drawImage(this._base, 0, 0);
-    for (const op of this._live.values()) this._paint(ctx, op);
+
+    if (!this._live.size || !this._liveLayer) return;
+    const first = this._live.values().next().value;
+    const b = BRUSHES[first.brush] || BRUSHES.pen;
+    ctx.globalAlpha = b.alpha;
+    ctx.drawImage(this._liveLayer, 0, 0);
+    ctx.globalAlpha = 1;
+  }
+
+  /* Adds the segments that have arrived since last time to the live layer. */
+  _appendLive(op) {
+    const ctx = this._liveCtx;
+    if (!ctx) return;
+    const n = op.points.length;
+    const from = op._drawn || 0;
+    if (n - 1 <= from && from !== 0) return;
+
+    const b = BRUSHES[op.brush] || BRUSHES.pen;
+    this._useLogical(ctx);
+    ctx.save();
+    ctx.fillStyle = op.color;
+    if (op.glow) {
+      ctx.shadowColor = op.rainbow ? '#ff00cc' : op.color;
+      ctx.shadowBlur = Math.max(8, op.size * 1.5);
+    }
+
+    if (n === 1) {
+      ctx.beginPath();
+      ctx.arc(op.points[0].x, op.points[0].y, Math.max(1, this._widthAt(op, 0) / 2), 0, Math.PI * 2);
+      ctx.fill();
+    } else if (op.rainbow) {
+      for (let i = from; i < n - 1; i++) {
+        ctx.fillStyle = `hsl(${((op.hue || 0) + i * 9) % 360} 90% 55%)`;
+        ctx.fill(this._ribbon(op, i, i + 1, i === 0));
+      }
+    } else {
+      ctx.fill(this._ribbon(op, from, n - 1, from === 0));
+    }
+    this._paintGrain(ctx, op, b, from);
+    ctx.restore();
+    op._drawn = n - 1;
+  }
+
+  /* Wipes the live layer and puts back whatever is still under a finger. */
+  _refreshLiveLayer() {
+    if (!this._liveCtx) return;
+    this._liveCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._liveCtx.clearRect(0, 0, this._liveLayer.width, this._liveLayer.height);
+    for (const op of this._live.values()) {
+      op._drawn = 0;
+      this._appendLive(op);
+    }
   }
 
   _scheduleComposite() {
@@ -587,15 +760,16 @@ class DrawCanvas {
   getDoc() {
     const r = n => Math.round(n * 10) / 10;
     return {
-      v: 2,
+      v: 3,
       ref: this.ref,
       ops: this.ops.map(op => {
         if (op.type !== 'stroke') return op;
-        const { points, ...rest } = op;
-        const pts = new Array(points.length * 2);
+        const { points, _t, ...rest } = op;
+        const pts = new Array(points.length * 3);
         for (let i = 0; i < points.length; i++) {
-          pts[i * 2] = r(points[i].x);
-          pts[i * 2 + 1] = r(points[i].y);
+          pts[i * 3] = r(points[i].x);
+          pts[i * 3 + 1] = r(points[i].y);
+          pts[i * 3 + 2] = Math.round(points[i].w || op.size);
         }
         return { ...rest, pts };
       }),
@@ -628,12 +802,17 @@ class DrawCanvas {
       const { pts, ...rest } = op;
       let points = op.points;
       if (Array.isArray(pts)) {
+        // v3 stores x, y and width; v2 stored x and y only.
+        const stride = doc.v >= 3 ? 3 : 2;
         points = [];
-        for (let i = 0; i + 1 < pts.length; i += 2) points.push({ x: pts[i], y: pts[i + 1] });
+        for (let i = 0; i + stride - 1 < pts.length; i += stride) {
+          points.push({ x: pts[i], y: pts[i + 1], w: stride === 3 ? pts[i + 2] : op.size });
+        }
       }
       if (!Array.isArray(points) || !points.length) continue;
       if (!points.every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))) continue;
-      ops.push({ ...rest, points });
+      // Drawings made before brushes existed were all pen.
+      ops.push({ brush: DEFAULT_BRUSH, seed: 1, ...rest, points });
     }
 
     this.ops = ops;
@@ -728,6 +907,43 @@ class DrawCanvas {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  /*
+   * How wide the line is right here. Speed thins it, which is most of what
+   * makes a drawn line look drawn; a stylus that reports pressure overrides
+   * that with the real thing. The result eases towards its target so an
+   * unsteady hand does not make the line flicker.
+   */
+  _widthFor(op, lp, e) {
+    const b = BRUSHES[op.brush] || BRUSHES.pen;
+    const prev = op.points[op.points.length - 1];
+    let target = op.size;
+
+    if (b.taper && prev) {
+      const dt = Math.max(4, (e.timeStamp || 0) - (op._t || 0));
+      const speed = Math.hypot(lp.x - prev.x, lp.y - prev.y) / dt;   // px per ms
+      target = op.size * (1 - b.taper * Math.min(1, speed / 1.5));
+    }
+    // Touch reports a flat 0.5, which would just scale everything down; only a
+    // real stylus reading is worth listening to.
+    if (e.pointerType === 'pen' && e.pressure > 0) {
+      target *= 0.45 + 0.85 * e.pressure;
+    }
+
+    const last = prev ? prev.w : target;
+    return Math.max(0.8, last * b.ease + target * (1 - b.ease));
+  }
+
+  /* Records one sample. Returns false if it was too close to the last one. */
+  _addPoint(op, p, e) {
+    const lp = this._toLogical(p.x, p.y);
+    const prev = op.points[op.points.length - 1];
+    if (prev && Math.hypot(lp.x - prev.x, lp.y - prev.y) < 0.7) return false;
+    lp.w = this._widthFor(op, lp, e);
+    op._t = e.timeStamp || 0;
+    op.points.push(lp);
+    return true;
+  }
+
   _start(e) {
     e.preventDefault();
     const p = this._pos(e);
@@ -754,15 +970,21 @@ class DrawCanvas {
 
     // Each pointer gets its own stroke, so two fingers draw two lines.
     const rainbow = this.color === 'rainbow';
-    this._live.set(e.pointerId, {
+    const op = {
       type: 'stroke',
+      brush: this.brush,
       color: rainbow ? '#ff3b30' : this.color,
       rainbow,
       hue: rainbow ? (this._hue += 47) % 360 : undefined,
       size: this.size,
       glow: this.glowOn,
-      points: [lp],
-    });
+      seed: (this._seed = (this._seed || 0) + 1),
+      points: [],
+      _t: e.timeStamp || 0,
+    };
+    this._addPoint(op, p, e);
+    this._live.set(e.pointerId, op);
+    this._appendLive(op);
     this._addSparkles(p.x, p.y);
     this._scheduleComposite();
   }
@@ -772,15 +994,39 @@ class DrawCanvas {
     if (!op) return;
     e.preventDefault();
 
-    const p = this._pos(e);
-    const lp = this._toLogical(p.x, p.y);
-    const last = op.points[op.points.length - 1];
-    // Drop near-duplicate points: smaller ops, no visible difference.
-    if (Math.hypot(lp.x - last.x, lp.y - last.y) < 1) return;
+    /*
+     * A 120Hz screen delivers several real samples per pointermove and hands
+     * the rest over only if asked. Reading the last one and dropping the others
+     * is what makes a quick line look faceted.
+     */
+    const batch = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+    let added = false;
+    for (const s of (batch && batch.length ? batch : [e])) {
+      const p = this._pos(s);
+      if (this._addPoint(op, p, s)) {
+        this._addSparkles(p.x, p.y);
+        added = true;
+      }
+    }
+    if (added) {
+      this._appendLive(op);
+      this._scheduleComposite();
+    }
+  }
 
-    op.points.push(lp);
-    this._addSparkles(p.x, p.y);
-    this._scheduleComposite();
+  /*
+   * The lift. A real line thins where the hand comes off it, and this is the
+   * one moment we know where the stroke actually ends — while it is being
+   * drawn, the end keeps moving.
+   */
+  _taperTail(op) {
+    const n = op.points.length;
+    if (n < 4) return;
+    const k = Math.min(6, Math.floor(n / 3));
+    for (let j = 0; j < k; j++) {
+      const p = op.points[n - 1 - j];
+      p.w = Math.max(0.6, (p.w || op.size) * (0.35 + 0.65 * (j / k)));
+    }
   }
 
   _end(e) {
@@ -791,6 +1037,8 @@ class DrawCanvas {
     if (this.canvas.releasePointerCapture) {
       try { this.canvas.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
     }
+    this._taperTail(op);
+    this._refreshLiveLayer();   // this stroke moves to the base; others stay
     this._commit(op);
   }
 

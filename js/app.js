@@ -1,6 +1,16 @@
 const STENCIL_IDS = ['none', 'trex', 'stego', 'trike', 'brachio', 'ptera'];
 const STAMPS = ['⭐', '❤️', '🌸', '😊', '☀️', '🌙', '☁️', '🌳', '🐟', '🦋', '🌈', '🍎'];
 
+/* The order they appear in the brush sheet. Magic lives here rather than as a
+   toolbar switch: what she is holding is one choice, not a choice plus a
+   toggle, and it frees the slot the sheet button needs. */
+const BRUSH_LIST = [
+  { id: 'pen', icon: 'ic-pen', label: 'Pen' },
+  { id: 'marker', icon: 'ic-marker', label: 'Marker' },
+  { id: 'crayon', icon: 'ic-crayon', label: 'Crayon' },
+  { id: 'magic', icon: 'ic-magic', label: 'Magic sparkles' },
+];
+
 document.addEventListener('DOMContentLoaded', () => {
   const draw = new DrawCanvas(
     document.getElementById('drawCanvas'),
@@ -20,7 +30,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let resizeTimer = null;
   const scheduleResize = () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => draw.resize(), 120);
+    resizeTimer = setTimeout(() => {
+      draw.resize();
+      Sound.setStage(draw._w);
+    }, 120);
   };
   window.addEventListener('resize', scheduleResize);
   window.addEventListener('orientationchange', scheduleResize);
@@ -29,6 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
   /* Audio can only start after a real user gesture. */
   const wake = () => Sound.init();
   document.addEventListener('pointerdown', wake, { capture: true });
+  Sound.setStage(draw._w);
 
   /* ─── AUTOSAVE ─── */
   const STORE_KEY = 'drawpad.doc';
@@ -61,10 +75,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* ─── SOUND HOOKS ─── */
   let strokeTone = 0;
-  draw.canvas.addEventListener('pointerdown', () => {
-    if (draw.mode === 'stamp') Sound.stamp();
-    else if (draw.mode === 'fill') Sound.fill();
-    else Sound.strokeStart(strokeTone++);
+  draw.canvas.addEventListener('pointerdown', e => {
+    const x = e.clientX - draw.canvas.getBoundingClientRect().left;
+    if (draw.mode === 'stamp') Sound.stamp(x);
+    else if (draw.mode === 'fill') Sound.fill(x);
+    else Sound.strokeStart(strokeTone++, x, draw.size);
   });
   draw.onCelebrate = () => Sound.celebrate();
 
@@ -73,19 +88,31 @@ document.addEventListener('DOMContentLoaded', () => {
      never disagree with what a tap on the paper will actually do. */
   const fillBtn = document.querySelector('.tool-btn[data-mode="fill"]');
   const stampsBtn = document.getElementById('stampsBtn');
+  const brushBtn = document.getElementById('brushBtn');
 
   function setMode(mode) {
     draw.setMode(mode);
     fillBtn.classList.toggle('active', mode === 'fill');
     stampsBtn.classList.toggle('active', mode === 'stamp');
+    brushBtn.classList.toggle('active', mode === 'draw');
   }
 
   /* ─── COLOURS ─── */
+  /* The interface wears the colour she is drawing with: the size dots, the
+     bucket and the brush button all pick it up from this one variable. */
+  function applyColor(color) {
+    draw.setColor(color);
+    const rainbow = color === 'rainbow';
+    document.documentElement.style.setProperty('--now', rainbow ? '#ff7a3d' : color);
+    document.querySelectorAll('#tools .dot').forEach(d => d.classList.toggle('rainbow', rainbow));
+    document.querySelectorAll('.tool-btn.tinted').forEach(b => b.classList.toggle('on-rainbow', rainbow));
+  }
+
   document.querySelectorAll('.c-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on'));
       btn.classList.add('on');
-      draw.setColor(btn.dataset.color);
+      applyColor(btn.dataset.color);
       // Colour does nothing to a sticker, so reaching for one means she wants
       // to draw again. Picking a colour while filling is a colour change.
       if (draw.mode === 'stamp') setMode('draw');
@@ -96,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const defaultSwatch = document.querySelector(`.c-btn[data-color="${DEFAULT_COLOR}"]`)
     || document.querySelector('.c-btn');
   defaultSwatch.classList.add('on');
-  draw.setColor(defaultSwatch.dataset.color);
+  applyColor(defaultSwatch.dataset.color);
 
   /* ─── BRUSH SIZE ─── */
   document.querySelectorAll('.size-btn').forEach(btn => {
@@ -116,32 +143,48 @@ document.addEventListener('DOMContentLoaded', () => {
     Sound.pick();
   });
 
-  /* ─── MAGIC BRUSH ─── */
-  /* One button instead of separate Sparks and Glow toggles: a child picks a
-     brush that is magic, not two independent abstract switches. */
-  const magicBtn = document.querySelector('.tool-btn[data-toggle="magic"]');
-  magicBtn.addEventListener('click', () => {
-    const on = !magicBtn.classList.contains('active');
-    magicBtn.classList.toggle('active', on);
-    draw.setSparkle(on);
-    draw.setGlow(on);
-    Sound.pick();
+  /* ─── BRUSHES ─── */
+  const brushGrid = document.getElementById('brushGrid');
+  const brushIcon = brushBtn.querySelector('use');
+
+  BRUSH_LIST.forEach((b, i) => {
+    const cell = document.createElement('button');
+    cell.className = 'picker-cell brush-cell';
+    cell.dataset.brush = b.id;
+    cell.setAttribute('aria-label', b.label);
+    cell.innerHTML = `<svg class="ic"><use href="#${b.icon}"/></svg>`;
+    cell.addEventListener('click', () => {
+      selectBrush(b.id);
+      Sound.brush(i);
+      closePickers();
+    });
+    brushGrid.appendChild(cell);
   });
 
+  function selectBrush(id) {
+    const entry = BRUSH_LIST.find(b => b.id === id) || BRUSH_LIST[0];
+    draw.setBrush(entry.id);
+    // The toolbar button becomes the brush she is holding.
+    brushIcon.setAttribute('href', `#${entry.icon}`);
+    brushGrid.querySelectorAll('.picker-cell').forEach(c =>
+      c.classList.toggle('on', c.dataset.brush === entry.id));
+    setMode('draw');
+  }
+  selectBrush('pen');
+
   /* ─── STENCIL PICKER ─── */
-  const stencilPicker = document.getElementById('stencilPicker');
   const stencilGrid = document.getElementById('stencilGrid');
 
   STENCIL_IDS.forEach(id => {
     const cell = document.createElement('button');
-    cell.className = 'picker-cell';
+    cell.className = 'picker-cell stencil-cell';
     cell.dataset.stencil = id;
     cell.setAttribute('aria-label', id === 'none' ? 'No outline' : STENCILS[id].name);
 
     if (id === 'none') {
-      cell.textContent = '🚫';
+      cell.innerHTML = '<svg class="ic"><use href="#ic-none"/></svg>';
     } else {
-      // Show the real outline rather than an emoji that looks nothing like it.
+      // Show the real outline rather than an icon that looks nothing like it.
       const c = document.createElement('canvas');
       const S = 200;
       c.width = S;
@@ -165,7 +208,6 @@ document.addEventListener('DOMContentLoaded', () => {
   stencilGrid.firstChild.classList.add('on');
 
   /* ─── STAMP PICKER ─── */
-  const stampPicker = document.getElementById('stampPicker');
   const stampGrid = document.getElementById('stampGrid');
 
   function currentStampSize() {
@@ -203,23 +245,31 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  /* ─── PICKER OPEN / CLOSE ─── */
+  /* ─── SHEETS ─── */
+  const scrim = document.getElementById('scrim');
+  const sheets = {
+    brush: document.getElementById('brushPicker'),
+    stencil: document.getElementById('stencilPicker'),
+    stamp: document.getElementById('stampPicker'),
+  };
+
   function closePickers() {
-    stencilPicker.classList.add('hidden');
-    stampPicker.classList.add('hidden');
+    for (const el of Object.values(sheets)) el.classList.add('hidden');
+    scrim.classList.add('hidden');
   }
 
-  document.getElementById('dinosBtn').addEventListener('click', () => {
-    stampPicker.classList.add('hidden');
-    stencilPicker.classList.remove('hidden');
+  function openPicker(name) {
+    for (const [key, el] of Object.entries(sheets)) el.classList.toggle('hidden', key !== name);
+    scrim.classList.remove('hidden');
     Sound.pick();
-  });
+  }
 
-  document.getElementById('stampsBtn').addEventListener('click', () => {
-    stencilPicker.classList.add('hidden');
-    stampPicker.classList.remove('hidden');
-    Sound.pick();
-  });
+  brushBtn.addEventListener('click', () => openPicker('brush'));
+  document.getElementById('dinosBtn').addEventListener('click', () => openPicker('stencil'));
+  stampsBtn.addEventListener('click', () => openPicker('stamp'));
+
+  // Tapping the paper behind a sheet puts it away, the way a sheet should.
+  scrim.addEventListener('pointerdown', e => { e.preventDefault(); closePickers(); });
 
   document.querySelectorAll('.picker-close').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -252,9 +302,11 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const tick = () => {
-      const pct = Math.min(1, (performance.now() - start) / ms);
+      // Ease it, so the ring accelerates into the action instead of creeping.
+      const t = Math.min(1, (performance.now() - start) / ms);
+      const pct = t * t * (3 - 2 * t);
       btn.style.setProperty('--hold', (pct * 100).toFixed(1) + '%');
-      if (pct >= 1) {
+      if (t >= 1) {
         end();
         onDone();
         btn.classList.add('done');
@@ -320,17 +372,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* ─── MUTE ─── */
   const muteBtn = document.getElementById('muteBtn');
+  const muteIcon = muteBtn.querySelector('use');
+  const showMuted = m => muteIcon.setAttribute('href', m ? '#ic-sound-off' : '#ic-sound-on');
   try {
     if (localStorage.getItem('drawpad.muted') === '1') {
       Sound.setMuted(true);
-      muteBtn.textContent = '🔇';
+      showMuted(true);
     }
   } catch (_) { /* storage blocked */ }
 
   muteBtn.addEventListener('click', () => {
     const muted = !Sound.muted;
     Sound.setMuted(muted);
-    muteBtn.textContent = muted ? '🔇' : '🔊';
+    showMuted(muted);
     try { localStorage.setItem('drawpad.muted', muted ? '1' : '0'); } catch (_) { /* ignore */ }
     if (!muted) Sound.pick();
   });

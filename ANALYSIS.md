@@ -444,3 +444,102 @@ sizes. The outline is now drawn in the artwork's space, and moves with it.
   can't get stuck mid-hold.
 - `loadDoc()` accepted anything shaped like an array and could throw on a
   corrupt save. It now drops ops it can't read and keeps the rest.
+
+## Part 5 — Making it feel like a real drawing app
+
+A different brief from the earlier parts: not "what is broken" but "how do we
+make this feel like a tool rather than a toy, without losing the fun". Nothing
+playful was removed — same confetti, same rainbow, same stickers, same wordless
+controls. What changed is how the ink behaves and how the interface is built.
+
+### The stroke
+
+A constant-width `ctx.stroke()` on a polyline is the single strongest tell that
+a drawing app is a weekend project. Real ink varies.
+
+- **Width follows speed**, recorded per point as the finger moves: fast thins,
+  slow thickens, and the width eases towards its target so an unsteady hand
+  does not make the line flicker. A stylus reporting real pressure overrides
+  the speed estimate; touch reports a flat 0.5 and is ignored.
+- **Both ends taper.** The start taper is applied at render time. The lift-off
+  taper is written into the recorded widths when the finger comes up — a taper
+  measured from the end of the stroke would keep changing shape behind the
+  finger and could not be drawn incrementally.
+- **Coalesced events.** A 120Hz screen batches several real samples into one
+  `pointermove` and hands over the rest only if asked. Reading the last and
+  dropping the others is what made fast lines look faceted.
+- **A low-latency context.** `desynchronized: true` on the drawing layers.
+
+Strokes are now filled ribbons: a quad per segment plus a disc at each joint,
+in a single path. Two things about that were worth learning the hard way:
+
+1. The discs must be **wound the same way round as the quads**. Under nonzero
+   winding an opposite winding subtracts, which punched a row of holes down the
+   middle of every line — and let tap-to-fill leak straight through them.
+2. Filling the segments **separately** stacks a translucent brush's alpha up at
+   every joint until the line looks beaded. One compound path, one fill.
+
+### Brushes
+
+Four materials rather than three sizes of the same round pen: pen, marker
+(translucent, so it builds up where it crosses), crayon (seeded grain along the
+edges, so an undo puts every fleck back where it was) and magic.
+
+Magic is now a brush rather than a toolbar switch. That is the same "turn modes
+into brushes" idea as Part 2 — what she is holding is one choice rather than a
+choice plus two switches — and it frees the toolbar slot the brush sheet needs.
+
+### Keeping it fast
+
+The first version of the ribbon repainted the whole stroke every frame and cost
+**40ms a frame** once a scribble passed a thousand points, which is precisely
+the lag Part 4 existed to remove. The stroke under the finger now lives on its
+own layer and only newly arrived segments are added to it; the layer is painted
+opaque and composited at the brush's alpha, so a marker builds up where it
+crosses another stroke but not along its own length. Cost per frame is flat at
+well under a millisecond.
+
+### The interface
+
+- **No emoji.** `🪣 ✨ ⭐ 🦖 🗑 💾 🔊 ↩` came from a dozen illustrators at a dozen
+  weights and rendered differently on every OS. They are replaced by one drawn
+  set at a single line weight, in `currentColor` so a button can wear the
+  colour she is drawing with. Emoji remain as *stickers* — that is artwork she
+  stamps, not interface. A test fails if one reappears in the toolbar.
+- **A dark island.** The tray was `#f2e7d5` chips on `#e8ded1` — about 1.15:1,
+  so the controls barely existed and everything looked slightly dirty. It is
+  now a dark warm ink, inset from the edges with a shadow, and the bright
+  swatches sing against it instead of sinking. Below tablet width it runs full
+  bleed, because the margins are width the seven tools need.
+- **The paper is an object**: inset, rounded, shadowed, with a faint grain.
+- **One selected state.** Swatches used a hard dark ring; tools used a red
+  border and a white fill — two visual languages for one idea. Everything now
+  lifts: grows, gains a ring, casts a shadow.
+- **Hierarchy instead of sixteen equal chips.** The three sizes sit in one
+  recessed group, so the row reads as "a thickness, then some tools". Undo is a
+  child action and stays large; clear, save and mute are grown-up actions —
+  same target size, far quieter, grouped apart.
+- **The interface wears the colour.** Size dots and the bucket and brush icons
+  take the current colour rather than a permanent grey.
+- **Sheets, not takeovers.** The pickers were full-screen white pages that
+  appeared with no transition and closed with a green tick the size of a plum.
+  They are now bottom sheets that slide up over the paper, keep her drawing
+  visible, and close by tapping it.
+- **A spacing and radius scale** (4/8/12/16/24, radii 12/18/26/34) replacing ad
+  hoc values that ran 5, 6, 7, 12, 14px with radii of 50%, 18px and 22px.
+- **Motion with weight**: springy easing instead of a flat `.1s` everywhere,
+  and the hold ring eases into the action instead of creeping.
+
+### Sound
+
+Same pentatonic notes, but each is two oscillators a few cents apart through a
+lowpass that opens with the size of the brush and a tail that decays instead of
+stopping. Notes are panned to where on the paper she touched.
+
+### Not done
+
+- Two-finger tap to undo, three-finger to redo — the obvious premium gesture,
+  and it conflicts with two fingers drawing two lines, which is the more
+  valuable behaviour for a child. Hold-to-repeat on the undo button would be
+  the compromise if the button ever feels too button-y.
+- There is still no redo button, though the engine supports it.

@@ -1,4 +1,4 @@
-const CACHE = 'draw-pad-v7';
+const CACHE = 'draw-pad-v8';
 const ASSETS = [
   '/',
   '/index.html',

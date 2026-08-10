@@ -112,6 +112,13 @@ const painted = page => page.evaluate(() => {
     await page.waitForTimeout(120);
   };
 
+  /* The sheets animate, so give them a beat to arrive and to leave. */
+  const pickBrush = async (page, id) => {
+    await page.click('#brushBtn');
+    await page.click(`.brush-cell[data-brush="${id}"]`);
+    await page.waitForTimeout(400);
+  };
+
   console.log('\ndraw-pad smoke tests\n');
 
   /* Undo removes exactly one stroke and keeps the rest. */
@@ -229,7 +236,7 @@ const painted = page => page.evaluate(() => {
   /* Sparkles fade instead of staining the artwork. */
   {
     const p = await open();
-    await p.click('.tool-btn[data-toggle="magic"]');
+    await pickBrush(p, 'magic');
     await stroke(p, 150);
     const justAfter = await painted(p);
     await p.waitForTimeout(2000);
@@ -402,14 +409,17 @@ const painted = page => page.evaluate(() => {
 
     const onOutline = await p.evaluate(() => {
       // A point on the dinosaur outline with none of her own paint on it.
+      // Offset by the canvas's own position: the paper is inset from the
+      // window, so canvas pixels are not window coordinates.
       const s = document.getElementById('stencilCanvas');
       const a = document.getElementById('drawCanvas');
-      const dpr = s.width / s.getBoundingClientRect().width;
+      const r = s.getBoundingClientRect();
+      const dpr = s.width / r.width;
       const sd = s.getContext('2d').getImageData(0, 0, s.width, s.height).data;
       const ad = a.getContext('2d').getImageData(0, 0, a.width, a.height).data;
       for (let i = 0; i < sd.length / 4; i++) {
         if (sd[i * 4 + 3] > 200 && ad[i * 4 + 3] < 10) {
-          return { x: (i % s.width) / dpr, y: Math.floor(i / s.width) / dpr };
+          return { x: r.left + (i % s.width) / dpr, y: r.top + Math.floor(i / s.width) / dpr };
         }
       }
       return null;
@@ -719,6 +729,164 @@ const painted = page => page.evaluate(() => {
     await p.close();
   }
 
+  /*
+   * A line has to look drawn rather than extruded: thin where it starts, full
+   * width once it is going, thin again where the finger lifts.
+   */
+  {
+    const p = await open();
+    const thickness = async clientX => p.evaluate(x => {
+      const c = document.getElementById('drawCanvas');
+      const r = c.getBoundingClientRect();
+      const dpr = c.width / r.width;
+      const col = Math.round((x - r.left) * dpr);
+      const d = c.getContext('2d').getImageData(col, 0, 1, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 10) n++;
+      return n / dpr;
+    }, clientX);
+
+    await p.mouse.move(60, 300);
+    await p.mouse.down();
+    for (let x = 60; x <= 340; x += 4) await p.mouse.move(x, 300);
+    await p.mouse.up();
+    await p.waitForTimeout(200);
+
+    const start = await thickness(66);
+    const middle = await thickness(200);
+    const end = await thickness(336);
+    check('strokes taper at both ends instead of running at one width',
+      start < middle * 0.85 && end < middle * 0.85 && middle > 4,
+      `start ${start.toFixed(1)}, middle ${middle.toFixed(1)}, end ${end.toFixed(1)} css px`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /*
+   * The brushes have to be genuinely different materials, and the translucent
+   * one must not darken along its own length: the ribbon is a quad per segment
+   * plus a disc at each joint, and filling those separately stacked the alpha
+   * up at every joint until the line looked beaded.
+   */
+  {
+    const p = await open();
+    const alphas = () => p.evaluate(() => {
+      const c = document.getElementById('drawCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let max = 0;
+      const seen = [];
+      for (let i = 3; i < d.length; i += 4) {
+        if (d[i] > 10) { seen.push(d[i]); if (d[i] > max) max = d[i]; }
+      }
+      return { max, count: seen.length };
+    });
+
+    await stroke(p, 150);                       // pen, the default
+    const pen = await alphas();
+    await p.click('#undoBtn');
+    await p.waitForTimeout(150);
+
+    await pickBrush(p, 'marker');
+    await stroke(p, 150);
+    const marker = await alphas();
+    check('pen is opaque and marker is translucent',
+      pen.max === 255 && marker.max > 80 && marker.max < 150,
+      `pen ${pen.max}, marker ${marker.max}`);
+    check('marker does not stack up along its own length', marker.max < 150,
+      `brightest marker pixel ${marker.max} — over ~145 means the joints are double-blending`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* The ribbon must be solid. Discs wound against the quads punched a row of
+     holes down the middle of every line, which also let fills leak out. */
+  {
+    const p = await open();
+    await p.mouse.move(70, 200);
+    await p.mouse.down();
+    for (let i = 0; i <= 40; i++) await p.mouse.move(70 + i * 6, 200 + Math.sin(i / 3) * 45);
+    await p.mouse.up();
+    await p.waitForTimeout(200);
+    const holes = await p.evaluate(() => {
+      const c = document.getElementById('drawCanvas');
+      const r = c.getBoundingClientRect();
+      const dpr = c.width / r.width;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const at = (x, y) => d[((Math.round((y - r.top) * dpr)) * c.width
+        + Math.round((x - r.left) * dpr)) * 4 + 3];
+      let gaps = 0;
+      for (let i = 2; i <= 38; i++) {
+        const x = 70 + i * 6, y = 200 + Math.sin(i / 3) * 45;
+        let best = 0;
+        for (let o = -3; o <= 3; o++) best = Math.max(best, at(x, y + o));
+        if (best < 200) gaps++;
+      }
+      return gaps;
+    });
+    check('the stroke is solid all the way along', holes === 0, `${holes} gaps on the centreline`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Crayon grain is random but seeded, so a replay puts every fleck back. */
+  {
+    const p = await open();
+    await pickBrush(p, 'crayon');
+    await p.click('.size-btn[data-size="34"]');
+    await stroke(p, 200);
+    const before = await painted(p);
+    await p.evaluate(() => { window.drawPad.undo(); window.drawPad.redo(); });
+    await p.waitForTimeout(200);
+    const after = await painted(p);
+    check('crayon grain is identical after an undo and redo', before === after && before > 0,
+      `${before} -> ${after} px`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Sheets: her drawing stays visible behind one, and tapping it puts it away. */
+  {
+    const p = await open();
+    await p.click('#dinosBtn');
+    await p.waitForTimeout(400);
+    const open1 = await p.evaluate(() => ({
+      sheet: !document.getElementById('stencilPicker').classList.contains('hidden'),
+      scrim: !document.getElementById('scrim').classList.contains('hidden'),
+      paperVisible: document.getElementById('drawCanvas').getBoundingClientRect().top < 100,
+    }));
+    await p.mouse.click(60, 80);   // the paper, behind the sheet
+    await p.waitForTimeout(400);
+    const closed = await p.evaluate(() => ({
+      sheet: document.getElementById('stencilPicker').classList.contains('hidden'),
+      scrim: document.getElementById('scrim').classList.contains('hidden'),
+      painted: window.drawPad.ops.length,
+    }));
+    check('a sheet opens over the drawing and taps behind it close it',
+      open1.sheet && open1.scrim && open1.paperVisible && closed.sheet && closed.scrim
+        && closed.painted === 0,
+      `${JSON.stringify(open1)} ${JSON.stringify(closed)}`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /*
+   * Icon budget. Emoji are fine as stickers — those are artwork she stamps —
+   * but as interface they are a dozen illustrators' styles at a dozen weights,
+   * which is the thing that made the app look assembled rather than designed.
+   */
+  {
+    const p = await open();
+    const offenders = await p.evaluate(() => {
+      const pictographic = /\p{Extended_Pictographic}/u;
+      return [...document.querySelectorAll('#toolbar button, #floatTools button, #brushGrid button, #stencilGrid button, .picker-close')]
+        .filter(b => pictographic.test(b.textContent))
+        .map(b => b.getAttribute('aria-label'));
+    });
+    check('the interface is drawn icons, not emoji', offenders.length === 0,
+      offenders.join(', '));
+    await p.close();
+  }
+
   /* Age-appropriate layout budget: canvas dominates, nothing to read,
      nothing tiny, and no row wraps into a second line. */
   {
@@ -727,11 +895,19 @@ const painted = page => page.evaluate(() => {
       const p = await open({ viewport: vp });
       const m = await p.evaluate(() => {
         const cw = document.getElementById('canvasWrap').getBoundingClientRect();
-        const vis = [...document.querySelectorAll('button')].filter(b => b.offsetParent !== null);
-        // offsetTop, not getBoundingClientRect: the selected swatch is scaled
-        // up, which shifts its visual box without wrapping the row.
-        const lines = ['#colors', '#tools'].map(sel =>
-          new Set([...document.querySelector(sel).children].map(k => k.offsetTop)).size);
+        // checkVisibility, not offsetParent: a closed sheet is hidden with
+        // visibility and a transform so it can animate, and offsetParent still
+        // reports its buttons as laid out.
+        const vis = [...document.querySelectorAll('button')].filter(b =>
+          b.checkVisibility({ visibilityProperty: true, opacityProperty: true }));
+        // Row height against its tallest child. Comparing offsetTop across
+        // children breaks now that the size group is taller than a bare chip
+        // and the selected swatch is scaled up; height catches a wrap exactly.
+        const lines = ['#colors', '#tools'].map(sel => {
+          const el = document.querySelector(sel);
+          const tallest = Math.max(...[...el.children].map(k => k.getBoundingClientRect().height));
+          return Math.round(el.getBoundingClientRect().height / tallest);
+        });
         return {
           canvasPct: Math.round(cw.height / innerHeight * 100),
           buttons: vis.length,
