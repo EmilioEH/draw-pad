@@ -10,8 +10,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   draw.resize();
   draw.bind();
-  window.addEventListener('resize', () => draw.resize());
   window.drawPad = draw;   // handle for the smoke tests
+
+  /*
+   * A phone fires resize repeatedly while the URL bar slides away, and each one
+   * used to re-render the whole picture mid-stroke. Coalesce the burst into one
+   * rebuild; DrawCanvas.resize() then ignores it entirely if nothing moved.
+   */
+  let resizeTimer = null;
+  const scheduleResize = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => draw.resize(), 120);
+  };
+  window.addEventListener('resize', scheduleResize);
+  window.addEventListener('orientationchange', scheduleResize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleResize);
 
   /* Audio can only start after a real user gesture. */
   const wake = () => Sound.init();
@@ -55,12 +68,27 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   draw.onCelebrate = () => Sound.celebrate();
 
+  /* ─── MODE: DRAW vs FILL vs STAMP ─── */
+  /* One place decides the mode and what the toolbar shows, so the buttons can
+     never disagree with what a tap on the paper will actually do. */
+  const fillBtn = document.querySelector('.tool-btn[data-mode="fill"]');
+  const stampsBtn = document.getElementById('stampsBtn');
+
+  function setMode(mode) {
+    draw.setMode(mode);
+    fillBtn.classList.toggle('active', mode === 'fill');
+    stampsBtn.classList.toggle('active', mode === 'stamp');
+  }
+
   /* ─── COLOURS ─── */
   document.querySelectorAll('.c-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.c-btn').forEach(b => b.classList.remove('on'));
       btn.classList.add('on');
       draw.setColor(btn.dataset.color);
+      // Colour does nothing to a sticker, so reaching for one means she wants
+      // to draw again. Picking a colour while filling is a colour change.
+      if (draw.mode === 'stamp') setMode('draw');
       Sound.pick();
     });
   });
@@ -76,18 +104,12 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       draw.setSize(parseInt(btn.dataset.size));
+      // Choosing a brush thickness only means one thing: back to drawing.
+      if (draw.mode !== 'draw') setMode('draw');
       Sound.pick();
     });
   });
   draw.setSize(parseInt(document.querySelector('.size-btn.active').dataset.size));
-
-  /* ─── MODE: DRAW vs FILL vs STAMP ─── */
-  const fillBtn = document.querySelector('.tool-btn[data-mode="fill"]');
-
-  function setMode(mode) {
-    draw.setMode(mode);
-    fillBtn.classList.toggle('active', mode === 'fill');
-  }
 
   fillBtn.addEventListener('click', () => {
     setMode(draw.mode === 'fill' ? 'draw' : 'fill');
@@ -161,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
       cell.classList.add('on');
       // The button's own glyph is the stamp — no second list to keep in sync.
       draw.setStamp(emoji, currentStampSize());
-      fillBtn.classList.remove('active');
+      setMode('stamp');
       Sound.stamp();
       closePickers();
     });
@@ -173,7 +195,10 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.stamp-size-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const active = stampGrid.querySelector('.picker-cell.on');
-      if (active) draw.setStamp(active.textContent.trim(), parseInt(btn.dataset.stampsize));
+      if (active) {
+        draw.setStamp(active.textContent.trim(), parseInt(btn.dataset.stampsize));
+        setMode('stamp');
+      }
       Sound.pick();
     });
   });
@@ -217,10 +242,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function holdToConfirm(btn, ms, onDone) {
     let raf = null;
     let start = 0;
+    let holder = null;
 
     const end = () => {
       if (raf) cancelAnimationFrame(raf);
       raf = null;
+      holder = null;
       btn.style.setProperty('--hold', '0%');
     };
 
@@ -239,11 +266,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btn.addEventListener('pointerdown', e => {
       e.preventDefault();
+      if (holder !== null) return;   // a second finger must not start a second timer
+      holder = e.pointerId;
+      // Capture the pointer so a wobbling finger keeps the hold going. Sliding
+      // off the button used to cancel it, which is most of a three-year-old's
+      // attempts, and it also let the finger start drawing on the paper below.
+      if (btn.setPointerCapture) {
+        try { btn.setPointerCapture(e.pointerId); } catch (_) { /* not capturable */ }
+      }
       start = performance.now();
       raf = requestAnimationFrame(tick);
     });
-    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
-      btn.addEventListener(ev, end));
+
+    // Window-level too: if capture is refused and the finger lifts elsewhere,
+    // the button would otherwise stay stuck mid-hold and never work again.
+    const release = e => {
+      if (holder !== null && (e.pointerId === undefined || e.pointerId === holder)) end();
+    };
+    for (const ev of ['pointerup', 'pointercancel']) {
+      btn.addEventListener(ev, release);
+      window.addEventListener(ev, release);
+    }
   }
 
   holdToConfirm(document.getElementById('clearBtn'), 1200, () => {

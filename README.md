@@ -21,7 +21,8 @@ npm test
 ```
 
 This drives the real app in a headless browser and checks the behaviour that
-matters: undo, multi-touch, resizing, tap-to-fill, and a layout budget that
+matters: undo, multi-touch, resizing, tap-to-fill, rotation, the cost of a
+fill and of a resize, which mode the toolbar says it is in, and a layout budget that
 fails if the toolbar grows back or a control gains a text label.
 
 The tests need a Chromium binary. `npm test` installs one automatically the

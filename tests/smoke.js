@@ -342,6 +342,288 @@ const painted = page => page.evaluate(() => {
     await p.close();
   }
 
+  /*
+   * Fill has to treat the child's own lines as walls, including while an
+   * outline is showing. Compositing the outline into the scratch copy used to
+   * clear the artwork out of it first, so drawing a box and colouring it in
+   * flooded almost the whole page.
+   */
+  {
+    const p = await open();
+    await p.click('#dinosBtn');
+    await p.click('.picker-cell[data-stencil="trex"]');
+    await p.waitForTimeout(300);
+
+    // A closed box, drawn as one stroke.
+    const box = [[90, 150], [300, 150], [300, 330], [90, 330], [90, 150]];
+    await p.mouse.move(...box[0]);
+    await p.mouse.down();
+    for (const [x, y] of box.slice(1)) await p.mouse.move(x, y, { steps: 12 });
+    await p.mouse.up();
+    await p.waitForTimeout(150);
+
+    await p.click('.tool-btn[data-mode="fill"]');
+    await p.click('.c-btn[data-color="#34c759"]');
+    await p.mouse.click(195, 240);   // inside her box
+    await p.waitForTimeout(400);
+
+    const frac = await p.evaluate(() => {
+      const c = document.getElementById('drawCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 10) n++;
+      return n / (c.width * c.height);
+    });
+    // The box is roughly a sixth of the canvas; a leak covers most of it.
+    check('fill stops at her own lines, not just the outline', frac > 0.03 && frac < 0.30,
+      `filled ${(frac * 100).toFixed(1)}% of the canvas`);
+
+    /* Tapping a filled patch with another colour recolours it. Filling only
+       blank paper meant most repeat taps did nothing at all. */
+    await p.click('.c-btn[data-color="#007aff"]');
+    await p.mouse.click(195, 240);
+    await p.waitForTimeout(400);
+    const rgb = await p.evaluate(() => {
+      const c = document.getElementById('drawCanvas');
+      const dpr = c.width / c.getBoundingClientRect().width;
+      const d = c.getContext('2d').getImageData(Math.round(195 * dpr), Math.round(240 * dpr), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    });
+    check('tapping a filled area with a new colour recolours it',
+      rgb[2] > 200 && rgb[0] < 60, `rgb(${rgb})`);
+
+    /* A tap that changes nothing must not become an undo press that does
+       nothing either: the same colour again, or the printed outline, which is
+       a guide to trace rather than something to paint. */
+    const ops = await p.evaluate(() => window.drawPad.ops.length);
+    await p.mouse.click(195, 240);        // same colour, same region
+    await p.waitForTimeout(300);
+    const afterRepeat = await p.evaluate(() => window.drawPad.ops.length);
+
+    const onOutline = await p.evaluate(() => {
+      // A point on the dinosaur outline with none of her own paint on it.
+      const s = document.getElementById('stencilCanvas');
+      const a = document.getElementById('drawCanvas');
+      const dpr = s.width / s.getBoundingClientRect().width;
+      const sd = s.getContext('2d').getImageData(0, 0, s.width, s.height).data;
+      const ad = a.getContext('2d').getImageData(0, 0, a.width, a.height).data;
+      for (let i = 0; i < sd.length / 4; i++) {
+        if (sd[i * 4 + 3] > 200 && ad[i * 4 + 3] < 10) {
+          return { x: (i % s.width) / dpr, y: Math.floor(i / s.width) / dpr };
+        }
+      }
+      return null;
+    });
+    await p.mouse.click(onOutline.x, onOutline.y);
+    await p.waitForTimeout(300);
+    const afterOutline = await p.evaluate(() => window.drawPad.ops.length);
+
+    check('a fill that changes nothing is not recorded',
+      afterRepeat === ops && afterOutline === ops,
+      `${ops} ops -> ${afterRepeat} after a repeat tap -> ${afterOutline} after tapping the outline`);
+
+    /* Undo replays the history, and re-flooding every earlier fill made each
+       press slower than the one before it. */
+    const replay = await p.evaluate(() => {
+      const d = window.drawPad;
+      let floods = 0;
+      const orig = d._scratchCtx.getImageData.bind(d._scratchCtx);
+      d._scratchCtx.getImageData = (...a) => { floods++; return orig(...a); };
+      const at = () => {
+        const c = d.canvas;
+        const dpr = c.width / c.getBoundingClientRect().width;
+        return c.getContext('2d').getImageData(Math.round(195 * dpr), Math.round(240 * dpr), 1, 1).data[2];
+      };
+      const blue = at();
+      d.undo();
+      d.redo();
+      return { floods, blue, back: at() };
+    });
+    check('undo does not flood every earlier fill again', replay.floods === 0,
+      `${replay.floods} re-floods`);
+    check('undo then redo puts the fill back exactly', replay.back === replay.blue,
+      `${replay.blue} -> ${replay.back}`);
+
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Picking a sticker must be visible and escapable. Nothing in the toolbar
+     showed sticker mode, and no control returned to drawing, so every tap on
+     the paper kept producing stickers. */
+  {
+    const p = await open();
+    await p.click('#stampsBtn');
+    await p.click('#stampGrid .picker-cell');
+    await p.waitForTimeout(150);
+    const shown = await p.evaluate(() => ({
+      mode: window.drawPad.mode,
+      lit: document.getElementById('stampsBtn').classList.contains('active'),
+    }));
+    check('sticker mode is visible on the toolbar', shown.mode === 'stamp' && shown.lit,
+      JSON.stringify(shown));
+
+    await p.click('.c-btn[data-color="#007aff"]');
+    const afterColor = await p.evaluate(() => ({
+      mode: window.drawPad.mode,
+      lit: document.getElementById('stampsBtn').classList.contains('active'),
+    }));
+    check('a colour tap gets back out of sticker mode',
+      afterColor.mode === 'draw' && !afterColor.lit, JSON.stringify(afterColor));
+
+    await p.click('#stampsBtn');
+    await p.click('#stampGrid .picker-cell');
+    await p.click('.size-btn[data-size="34"]');
+    check('a brush size tap gets back out of sticker mode',
+      (await p.evaluate(() => window.drawPad.mode)) === 'draw');
+
+    // And the paper agrees: this leaves a line, not a row of stickers.
+    await stroke(p, 200);
+    check('drawing works again after sticker mode', (await painted(p)) > 0);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Phones fire resize for the URL bar sliding, not only for real resizes.
+     Re-rendering the picture for each one froze the app mid-stroke. */
+  {
+    const p = await open();
+    await stroke(p, 150);
+    const rebuilds = await p.evaluate(async () => {
+      const d = window.drawPad;
+      let n = 0;
+      const orig = d._rebuildBase.bind(d);
+      d._rebuildBase = () => { n++; orig(); };
+      for (let i = 0; i < 12; i++) window.dispatchEvent(new Event('resize'));
+      await new Promise(r => setTimeout(r, 400));
+      return n;
+    });
+    check('a burst of resize events with no size change rebuilds nothing',
+      rebuilds === 0, `${rebuilds} rebuilds`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Coverage means reading two canvases back off the GPU. Doing it at every
+     stroke end was a hitch on every single line. */
+  {
+    const p = await open();
+    await p.click('#dinosBtn');
+    await p.click('.picker-cell[data-stencil="trex"]');
+    await p.waitForTimeout(300);
+    const calls = await p.evaluate(() => {
+      const d = window.drawPad;
+      let n = 0;
+      const orig = d.coverage.bind(d);
+      d.coverage = () => { n++; return orig(); };
+      for (let i = 0; i < 12; i++) {
+        d._commit({ type: 'stroke', color: '#ff3b30', size: 10,
+          points: [{ x: 20, y: 20 + i * 4 }, { x: 60, y: 40 + i * 4 }] });
+      }
+      return n;
+    });
+    check('the celebration check is throttled, not run per stroke', calls <= 2,
+      `${calls} coverage readbacks for 12 strokes`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Turning the tablet must not slide the outline off the lines drawn on it:
+     the outline was laid out in screen space while the artwork lives in its
+     own, so the two scaled by different amounts. */
+  {
+    const p = await open();
+    await p.click('#dinosBtn');
+    await p.click('.picker-cell[data-stencil="trex"]');
+    await p.waitForTimeout(300);
+    await stroke(p, 150);   // a drawing exists, so the page keeps its proportions
+
+    const logicalBox = () => p.evaluate(() => {
+      const c = document.getElementById('stencilCanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let top = Infinity, bottom = -1;
+      for (let y = 0; y < c.height; y++) {
+        for (let x = 0; x < c.width; x++) {
+          if (d[(y * c.width + x) * 4 + 3] > 10) { if (y < top) top = y; if (y > bottom) bottom = y; break; }
+        }
+      }
+      // In the artwork's own units, which is where it has to stay put.
+      const t = window.drawPad._t();
+      const k = t.s * window.drawPad._dpr;
+      return { top: top / k, height: (bottom - top) / k };
+    });
+
+    const before = await logicalBox();
+    await p.setViewportSize({ width: 800, height: 420 });
+    await p.waitForTimeout(500);
+    const after = await logicalBox();
+    check('the outline stays put on the drawing when the tablet is turned',
+      Math.abs(before.height - after.height) < 4 && Math.abs(before.top - after.top) < 4,
+      `${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Two fingers on the bin — how a small child presses a button — must clear
+     once and leave the button usable. */
+  {
+    const p = await open();
+    await p.evaluate(() => localStorage.clear());
+    await stroke(p, 150);
+    const box = await p.locator('#clearBtn').boundingBox();
+    const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const cleared = await p.evaluate(async ([x, y]) => {
+      const el = document.getElementById('clearBtn');
+      let n = 0;
+      const orig = window.drawPad.clear.bind(window.drawPad);
+      window.drawPad.clear = () => { n++; orig(); };
+      const ev = (t, id) => el.dispatchEvent(new PointerEvent(t, {
+        pointerId: id, clientX: x, clientY: y, bubbles: true, cancelable: true, pointerType: 'touch' }));
+      ev('pointerdown', 11);
+      ev('pointerdown', 12);
+      await new Promise(r => setTimeout(r, 1500));
+      ev('pointerup', 11);
+      ev('pointerup', 12);
+      await new Promise(r => setTimeout(r, 100));
+      return { n, hold: el.style.getPropertyValue('--hold') };
+    }, [at.x, at.y]);
+    check('a two-finger hold clears once and resets the button',
+      cleared.n === 1 && cleared.hold === '0%', JSON.stringify(cleared));
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
+  /* Saves shrank; drawings saved by the old build must still open. */
+  {
+    const p = await open();
+    await p.evaluate(() => localStorage.clear());
+    const r = await p.evaluate(() => {
+      const d = window.drawPad;
+      d.ops = [];
+      for (let k = 0; k < 20; k++) {
+        const points = [];
+        for (let i = 0; i < 200; i++) points.push({ x: i * 1.5, y: k * 7 + i * 0.1 });
+        d.ops.push({ type: 'stroke', color: '#ff3b30', size: 10, points });
+      }
+      const now = JSON.stringify(d.getDoc()).length;
+      const old = JSON.stringify({ v: 1, ref: d.ref, ops: d.ops.map(o => ({ ...o,
+        points: o.points.map(q => ({ x: Math.round(q.x * 10) / 10, y: Math.round(q.y * 10) / 10 })) })) });
+      // An old-format document has to survive the upgrade.
+      d.ops = [];
+      const loaded = d.loadDoc(JSON.parse(old));
+      const pointsBack = d.ops[0] && d.ops[0].points && d.ops[0].points.length;
+      // And so does a round trip through the new one.
+      const roundTrip = d.loadDoc(JSON.parse(JSON.stringify(d.getDoc())))
+        && d.ops.length === 20 && d.ops[19].points.length === 200;
+      return { now, old: old.length, loaded, pointsBack, roundTrip };
+    });
+    check('saves are smaller and old ones still load',
+      r.now < r.old * 0.7 && r.loaded && r.pointsBack === 200 && r.roundTrip,
+      `${Math.round(r.old / 1024)}KB -> ${Math.round(r.now / 1024)}KB, ${JSON.stringify(r)}`);
+    await p.evaluate(() => localStorage.clear());
+    await p.close();
+  }
+
   /* The rainbow brush actually varies hue along the stroke. */
   {
     const p = await open();
